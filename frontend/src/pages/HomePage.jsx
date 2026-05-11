@@ -2,40 +2,80 @@ import React from 'react'
 
 function HomePage() {
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="bg-white/10 backdrop-blur-md rounded-2xl p-8 md:p-12 text-center shadow-2xl border border-white/20 max-w-2xl w-full">
-        <div className="flex items-center justify-center mb-6">
-          <div className="w-20 h-20 bg-gradient-to-br from-blue-400 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
-            <span className="text-4xl">✨</span>
-          </div>
-        </div>
-        <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
-          Spandan
+    <div className="min-h-screen flex items-center justify-center p-4" style={{
+      background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #1e3c72 100%)'
+    }}>
+      <div style={{
+        background: 'rgba(255, 255, 255, 0.1)',
+        backdropFilter: 'blur(10px)',
+        borderRadius: '20px',
+        padding: '60px 80px',
+        textAlign: 'center',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+        border: '1px solid rgba(255, 255, 255, 0.2)'
+      }}>
+        <h1 style={{
+          fontSize: '3.5rem',
+          marginBottom: '10px',
+          textShadow: '2px 2px 4px rgba(0, 0, 0, 0.3)',
+          color: 'white'
+        }}>
+          ✨ spandan.fun ✨
         </h1>
-        <p className="text-yellow-400 text-xl md:text-2xl font-medium mb-6">
-          Poll Question Generator
+        <div style={{
+          width: '80px',
+          height: '4px',
+          background: '#ffd700',
+          margin: '20px auto',
+          borderRadius: '2px'
+        }}></div>
+        <p style={{
+          fontSize: '1.8rem',
+          margin: '20px 0',
+          color: '#ffd700'
+        }}>
+          Spandan which is a fun 🎉
         </p>
-        <div className="w-16 h-1 bg-yellow-400 mx-auto mb-6 rounded"></div>
-        <p className="text-white/80 text-lg mb-8">
-          Create engaging polls and questions for your classroom
+        <div style={{
+          width: '80px',
+          height: '4px',
+          background: '#ffd700',
+          margin: '20px auto',
+          borderRadius: '2px'
+        }}></div>
+        <p style={{
+          fontSize: '1.2rem',
+          opacity: 0.9,
+          marginTop: '20px',
+          color: 'white'
+        }}>
+          By Rohit Sharma | Built by Spandan_Astra ⭐
         </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+        <div style={{ marginTop: '30px' }}>
           <a
             href="/auth"
-            className="px-8 py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-full transition-all duration-300 shadow-lg hover:shadow-xl"
+            style={{
+              color: 'white',
+              textDecoration: 'none',
+              padding: '10px 25px',
+              border: '2px solid rgba(255, 255, 255, 0.3)',
+              borderRadius: '25px',
+              margin: '0 10px',
+              transition: 'all 0.3s',
+              display: 'inline-block'
+            }}
+            onMouseOver={(e) => {
+              e.target.style.background = 'rgba(255, 255, 255, 0.2)'
+              e.target.style.borderColor = '#ffd700'
+            }}
+            onMouseOut={(e) => {
+              e.target.style.background = 'transparent'
+              e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)'
+            }}
           >
             Get Started
           </a>
-          <a
-            href="#features"
-            className="px-8 py-3 border-2 border-white/30 hover:border-white/60 text-white font-semibold rounded-full transition-all duration-300"
-          >
-            Learn More
-          </a>
         </div>
-        <p className="text-white/50 mt-8 text-sm">
-          By Rohit Sharma | Built by Spandan_Astra ⭐
-        </p>
       </div>
     </div>
   )
