@@ -60,3 +60,13 @@ export const checkEmailExists = async (email) => {
   const user = await User.findOne({ email: email.toLowerCase() })
   return !!user
 }
+export const updateUserRole = async (userId, role) => {
+  const user = await User.findById(userId)
+  if (!user) {
+    throw new Error('User not found')
+  }
+  
+  user.role = role
+  await user.save()
+  return user
+}

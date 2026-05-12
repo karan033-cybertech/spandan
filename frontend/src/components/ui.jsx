@@ -1,5 +1,6 @@
 import React from 'react'
 import useAuthStore from '../stores/authStore'
+import SpandanIcon from '../components/SpandanIcon'
 import useSocketStore from '../stores/socketStore'
 import { useNavigate } from 'react-router-dom'
 
@@ -34,7 +35,7 @@ export function Header({ title, subtitle }) {
           justifyContent: 'center',
           fontSize: '24px'
         }}>
-          ✨
+          <SpandanIcon />
         </div>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>{title}</h1>

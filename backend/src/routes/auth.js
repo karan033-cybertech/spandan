@@ -1,5 +1,5 @@
 import express from 'express'
-import { register, login, getUserById, checkEmailExists } from '../services/authService.js'
+import { register, login, getUserById, checkEmailExists, updateUserRole } from '../services/authService.js'
 import { generateToken } from '../middleware/auth.js'
 import { validate, registerSchema, loginSchema } from '../middleware/validation.js'
 import { authenticate } from '../middleware/auth.js'
@@ -38,6 +38,24 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     })
   } catch (error) {
     res.status(401).json({ error: error.message })
+  }
+})
+
+// Update user role (called after registration role selection)
+router.put('/role', authenticate, async (req, res) => {
+  try {
+    const { role } = req.body
+    if (!['teacher', 'student'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role' })
+    }
+    
+    const user = await updateUserRole(req.user._id, role)
+    res.json({ 
+      message: 'Role updated successfully',
+      user 
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
   }
 })
 

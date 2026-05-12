@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import useAuthStore from '../stores/authStore'
 import useSocketStore from '../stores/socketStore'
 import useRoomStore from '../stores/roomStore'
+import Sidebar from '../components/Sidebar'
+import SpandanIcon from '../components/SpandanIcon'
 
 function StudentDashboard() {
   const navigate = useNavigate()
@@ -62,13 +64,19 @@ function StudentDashboard() {
   }
 
   return (
-    <div className="min-h-screen" style={{
+    <div style={{
+      display: 'flex',
+      minHeight: '100vh',
       background: 'linear-gradient(135deg, #f8f9fb 90%, #e0e7ff 100%)',
       fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif'
     }}>
-      {/* Header */}
-      <header style={{
-        background: 'linear-gradient(to right, #059669, #10b981)',
+      <Sidebar user={user} />
+      
+      {/* Main Content */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+        {/* Header */}
+        <header style={{
+          background: 'linear-gradient(to right, #1e40af, #3b82f6)',
         color: 'white',
         padding: '16px 32px',
         display: 'flex',
@@ -87,7 +95,7 @@ function StudentDashboard() {
             justifyContent: 'center',
             fontSize: '24px'
           }}>
-            ✨
+            <SpandanIcon />
           </div>
           <div>
             <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>Spandan</h1>
@@ -100,7 +108,7 @@ function StudentDashboard() {
               width: '8px',
               height: '8px',
               borderRadius: '50%',
-              background: isConnected ? '#10b981' : '#ef4444'
+              background: isConnected ? '#3b82f6' : '#ef4444'
             }}></div>
             <span style={{ fontSize: '14px' }}>{isConnected ? 'Connected' : 'Disconnected'}</span>
           </div>
@@ -125,7 +133,7 @@ function StudentDashboard() {
       <main style={{ maxWidth: '800px', margin: '0 auto', padding: '32px' }}>
         {/* Welcome Banner */}
         <div style={{
-          background: 'linear-gradient(135deg, #059669, #10b981)',
+          background: 'linear-gradient(135deg, #1e40af, #3b82f6)',
           borderRadius: '20px',
           padding: '40px',
           color: 'white',
@@ -169,7 +177,7 @@ function StudentDashboard() {
               <div style={{
                 width: '48px',
                 height: '48px',
-                background: 'linear-gradient(135deg, #059669, #10b981)',
+                background: 'linear-gradient(135deg, #1e40af, #3b82f6)',
                 borderRadius: '12px',
                 display: 'flex',
                 alignItems: 'center',
@@ -220,7 +228,7 @@ function StudentDashboard() {
                   outline: 'none',
                   textTransform: 'uppercase'
                 }}
-                onFocus={(e) => e.target.style.borderColor = '#10b981'}
+                onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
                 onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
               />
               <button
@@ -228,7 +236,7 @@ function StudentDashboard() {
                 disabled={!roomCode.trim() || isJoining}
                 style={{
                   padding: '14px 32px',
-                  background: roomCode.trim() && !isJoining ? '#059669' : '#9ca3af',
+                  background: roomCode.trim() && !isJoining ? '#1e40af' : '#9ca3af',
                   color: 'white',
                   border: 'none',
                   borderRadius: '12px',
@@ -255,7 +263,7 @@ function StudentDashboard() {
               <div style={{
                 width: '80px',
                 height: '80px',
-                background: '#ecfdf5',
+                background: '#eff6ff',
                 borderRadius: '50%',
                 display: 'flex',
                 alignItems: 'center',
@@ -264,7 +272,7 @@ function StudentDashboard() {
               }}>
                 <span style={{ fontSize: '40px' }}>✅</span>
               </div>
-              <h3 style={{ fontSize: '24px', fontWeight: '700', color: '#059669', marginBottom: '8px' }}>
+              <h3 style={{ fontSize: '24px', fontWeight: '700', color: '#1e40af', marginBottom: '8px' }}>
                 Joined Successfully!
               </h3>
               <p style={{ fontSize: '16px', color: '#6b7280' }}>
@@ -335,6 +343,7 @@ function StudentDashboard() {
       }}>
         <p style={{ margin: 0 }}>Spandan - Poll Question Generator</p>
       </footer>
+      </div>
     </div>
   )
 }

@@ -181,7 +181,7 @@ function RoomDetailPage() {
         <Header title="Room Not Found" />
         <div style={{ padding: '40px', textAlign: 'center' }}>
           <Alert type="error" message={error || 'Room not found'} />
-          <Button onClick={() => navigate('/dashboard')}>Back to Dashboard</Button>
+          <Button onClick={() => navigate('/teacher')}>Back to Dashboard</Button>
         </div>
       </div>
     )

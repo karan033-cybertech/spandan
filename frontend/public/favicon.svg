@@ -1,26 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
     <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#1e40af"/>
       <stop offset="100%" style="stop-color:#3b82f6"/>
     </linearGradient>
   </defs>
-  <!-- Background Circle -->
-  <circle cx="256" cy="256" r="240" fill="url(#blueGrad)"/>
-  <!-- Spark/Star Design -->
-  <g transform="translate(256,256)">
-    <!-- Center star -->
-    <polygon points="0,-80 20,-30 75,-30 30,10 50,65 0,35 -50,65 -30,10 -75,-30 -20,-30" fill="#ffd700"/>
-    <!-- Radiating lines -->
-    <line x1="0" y1="-95" x2="0" y2="-120" stroke="#ffd700" stroke-width="8" stroke-linecap="round"/>
-    <line x1="95" y1="0" x2="120" y2="0" stroke="#ffd700" stroke-width="8" stroke-linecap="round"/>
-    <line x1="0" y1="95" x2="0" y2="120" stroke="#ffd700" stroke-width="8" stroke-linecap="round"/>
-    <line x1="-95" y1="0" x2="-120" y2="0" stroke="#ffd700" stroke-width="8" stroke-linecap="round"/>
-    <line x1="67" y1="-67" x2="85" y2="-85" stroke="#ffd700" stroke-width="6" stroke-linecap="round"/>
-    <line x1="67" y1="67" x2="85" y2="85" stroke="#ffd700" stroke-width="6" stroke-linecap="round"/>
-    <line x1="-67" y1="67" x2="-85" y2="85" stroke="#ffd700" stroke-width="6" stroke-linecap="round"/>
-    <line x1="-67" y1="-67" x2="-85" y2="-85" stroke="#ffd700" stroke-width="6" stroke-linecap="round"/>
-    <!-- Inner glow -->
-    <circle cx="0" cy="0" r="35" fill="#fff8dc"/>
-  </g>
+  <rect width="64" height="64" rx="12" fill="url(#blueGrad)"/>
+  <text x="32" y="44" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700" fill="white" text-anchor="middle">स्पंदन</text>
 </svg>

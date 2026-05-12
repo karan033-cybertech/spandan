@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import useAuthStore from '../stores/authStore'
 import useRoomStore from '../stores/roomStore'
 import useSocketStore from '../stores/socketStore'
+import Sidebar from '../components/Sidebar'
+import SpandanIcon from '../components/SpandanIcon'
 
 function DashboardPage() {
   const navigate = useNavigate()
@@ -47,13 +49,19 @@ function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen" style={{
+    <div style={{
+      display: 'flex',
+      minHeight: '100vh',
       background: 'linear-gradient(135deg, #f8f9fb 90%, #e0e7ff 100%)',
       fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif'
     }}>
-      {/* Header */}
-      <header style={{
-        background: 'linear-gradient(to right, #1e40af, #1e3a8a)',
+      <Sidebar user={user} />
+      
+      {/* Main Content */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+        {/* Header */}
+        <header style={{
+          background: 'linear-gradient(to right, #1e40af, #1e3a8a)',
         color: 'white',
         padding: '16px 32px',
         display: 'flex',
@@ -72,7 +80,7 @@ function DashboardPage() {
             justifyContent: 'center',
             fontSize: '24px'
           }}>
-            ✨
+            <SpandanIcon />
           </div>
           <div>
             <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>Spandan</h1>
@@ -396,6 +404,7 @@ function DashboardPage() {
       }}>
         <p style={{ margin: 0 }}>Spandan - Poll Question Generator</p>
       </footer>
+      </div>
     </div>
   )
 }

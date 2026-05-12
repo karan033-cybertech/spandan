@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import useAuthStore from '../stores/authStore'
+import SpandanIcon from '../components/SpandanIcon'
 import useSocketStore from '../stores/socketStore'
 
 function AuthPage() {
@@ -53,19 +54,17 @@ function AuthPage() {
 
     try {
       if (isLogin) {
-        await login(formData.email, formData.password)
+        const data = await login(formData.email, formData.password)
+        // Login: navigate directly to appropriate dashboard based on role
+        if (data.user.role === 'teacher') {
+          navigate('/teacher')
+        } else {
+          navigate('/student')
+        }
       } else {
-        // Determine role from selectedRole state (will be set in role selection)
-        const role = user?.role || 'student'
-        await register(formData.name, formData.email, formData.password, role)
-      }
-      
-      // Only proceed to role selection if no role is set yet
-      if (!user?.role) {
+        // Registration: proceed to role selection
+        await register(formData.name, formData.email, formData.password, 'student')
         setStep('role')
-      } else {
-        // Navigate to dashboard if already has role
-        navigate('/dashboard')
       }
     } catch (err) {
       setValidationError(err.message)
@@ -74,12 +73,28 @@ function AuthPage() {
 
   const handleRoleSelect = async (role) => {
     try {
-      // Update user's role in the store
+      const { token } = useAuthStore.getState()
+      
+      // Update role on server
+      const response = await fetch('/api/auth/role', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ role })
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to update role')
+      }
+      
+      // Update local store
       useAuthStore.getState().updateRole(role)
       
       // Navigate to appropriate dashboard
       if (role === 'teacher') {
-        navigate('/dashboard')
+        navigate('/teacher')
       } else {
         navigate('/student')
       }
@@ -176,7 +191,7 @@ function AuthPage() {
                 margin: '0 auto 16px',
                 boxShadow: '0 15px 35px rgba(30, 64, 175, 0.25)'
               }}>
-                <span style={{ fontSize: '35px' }}>✨</span>
+                <SpandanIcon size={35} />
               </div>
               <h1 style={{
                 fontSize: '32px',
@@ -608,7 +623,7 @@ function AuthPage() {
                 margin: '0 auto 20px',
                 boxShadow: '0 20px 40px rgba(30, 64, 175, 0.3)'
               }}>
-                <span style={{ fontSize: '40px' }}>✨</span>
+                <SpandanIcon size={40} />
               </div>
               <h1 style={{
                 fontSize: '36px',
