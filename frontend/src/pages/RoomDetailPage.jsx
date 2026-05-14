@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import useAuthStore from '../stores/authStore'
 import useSocketStore from '../stores/socketStore'
@@ -8,6 +8,8 @@ import ThemeToggle from '../components/ThemeToggle'
 import ProfileDropdown from '../components/ProfileDropdown'
 import QuestionApprovalPopup from '../components/QuestionApprovalPopup'
 import CreateQuestionOverlay from '../components/CreateQuestionOverlay'
+import RoomSettingsModal from '../components/RoomSettingsModal'
+import { saveTranscript } from '../services/transcriptService'
 
 function RoomDetailPage() {
   const { roomId } = useParams()
@@ -41,18 +43,19 @@ function RoomDetailPage() {
   const [segmentTimeLeft, setSegmentTimeLeft] = useState(0)
   const segmentTimerRef = useRef(null)
 
+
   // Question generation
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false)
   const [pendingQuestions, setPendingQuestions] = useState([])
   const [showQuestionPopup, setShowQuestionPopup] = useState(false)
+  const [isPopupOpen, setIsPopupOpen] = useState(false)
   const [showCreateQuestion, setShowCreateQuestion] = useState(false)
   const [generatedQuestions, setGeneratedQuestions] = useState([])
-  const [ollamaModels, setOllamaModels] = useState([])
   const [roomSettings, setRoomSettings] = useState({
     segmentTime: 2,
     questionsPerSegment: 2,
     difficulty: 'medium',
-    ollamaModel: 'tinyllama:latest',
+    questionProvider: 'minimax',
     timeToAnswer: 30,
     points: 100
   })
@@ -62,7 +65,6 @@ function RoomDetailPage() {
       setAuthToken(token)
       loadRoom()
       initSpeechRecognition()
-      checkOllamaStatus()
     }
     
     return () => {
@@ -107,6 +109,7 @@ function RoomDetailPage() {
 
   // Start segment timer when recording
   useEffect(() => {
+    console.log('[EFFECT] Timer effect running, isRecording:', isRecording, 'segmentTime:', roomSettings.segmentTime)
     if (isRecording && roomSettings.segmentTime > 0) {
       startSegmentTimer()
     } else {
@@ -128,17 +131,7 @@ function RoomDetailPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const checkOllamaStatus = async () => {
-    try {
-      const response = await fetch('/api/questions/ollama-status')
-      const data = await response.json()
-      if (data.available) {
-        setOllamaModels(data.models)
-      }
-    } catch (error) {
-      console.error('Failed to check Ollama status:', error)
-    }
-  }
+
 
   const initSpeechRecognition = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -190,51 +183,117 @@ function RoomDetailPage() {
 
     recognitionRef.current.onend = () => {
       console.log('Speech recognition ended')
-      if (isRecording) {
+      // Only restart if recording AND popup is not open
+      if (isRecording && !isPopupOpen) {
         try {
           recognitionRef.current?.start()
         } catch (e) {
           setIsRecording(false)
           setIsTranscribing(false)
         }
+      } else if (isPopupOpen) {
+        console.log('[TRANSCRIPT] Paused - waiting for popup to close')
       }
     }
   }
 
   const startSegmentTimer = () => {
+    console.log('[TIMER] startSegmentTimer called, segmentTime:', roomSettings.segmentTime, 'isRecording:', isRecording)
+    
+    // Clear any existing timer
     if (segmentTimerRef.current) {
       clearInterval(segmentTimerRef.current)
+      segmentTimerRef.current = null
     }
-
+    
+    if (roomSettings.segmentTime <= 0) {
+      console.log('[TIMER] segmentTime is 0, not starting timer')
+      return
+    }
+    
     const totalSeconds = roomSettings.segmentTime * 60
+    console.log('[TIMER] Starting timer for', totalSeconds, 'seconds')
+    
     let secondsLeft = totalSeconds
-
     setSegmentTimeLeft(secondsLeft)
 
+    console.log('[TIMER] Creating interval for', totalSeconds, 'seconds')
     segmentTimerRef.current = setInterval(() => {
-      secondsLeft--
+      secondsLeft -= 1
       setSegmentTimeLeft(secondsLeft)
+      console.log('[TIMER] Tick:', secondsLeft, 'left')
 
       if (secondsLeft <= 0) {
-        generateQuestionsForSegment()
+        console.log('[TIMER] Timer reached 0!')
+        console.log('[TIMER] Clearing interval')
+        clearInterval(segmentTimerRef.current)
+        segmentTimerRef.current = null
+        
+        console.log('[TIMER] About to call generateQuestionsForSegment')
+        try {
+          generateQuestionsForSegment()
+          console.log('[TIMER] generateQuestionsForSegment called successfully')
+        } catch (e) {
+          console.error('[TIMER] Error calling generateQuestionsForSegment:', e)
+        }
       }
     }, 1000)
   }
 
   const generateQuestionsForSegment = async () => {
-    const textToUse = segmentTranscript.trim() || transcript
+    // Stop the timer first
+    if (segmentTimerRef.current) {
+      clearInterval(segmentTimerRef.current)
+      segmentTimerRef.current = null
+    }
+
+    console.log('[DEBUG] generateQuestionsForSegment called')
+    console.log('[DEBUG] isRecording:', isRecording)
+    console.log('[DEBUG] segmentTime:', roomSettings.segmentTime)
+    console.log('[DEBUG] currentSegment:', currentSegment)
+    console.log('[DEBUG] segmentTranscript length:', segmentTranscript.length)
+    console.log('[DEBUG] transcript length:', transcript.length)
+
+    console.log('[GEN] Starting question generation for segment')
+    
+    // CAPTURE the current transcript BEFORE doing anything else
+    const textToUse = (segmentTranscript.trim() || transcript.trim())
+    console.log('[GEN] Captured transcript length:', textToUse.length)
+    
     if (!textToUse) {
-      console.log('No transcript text to generate questions from')
+      console.log('[GEN] No transcript text, skipping question generation')
+      if (isRecording && roomSettings.segmentTime > 0) {
+        startSegmentTimer()
+      }
       return
     }
 
-    setCurrentSegment(prev => prev + 1)
+    // Now clear everything - including the ref
+    finalTranscriptRef.current = ''
     setSegmentTranscript('')
+    setTranscript('')
+    console.log('[GEN] Cleared transcript states')
 
-    await generateQuestionsFromText(textToUse)
+    const newSegment = currentSegment + 1
+    setCurrentSegment(newSegment)
+    console.log('[GEN] New segment:', newSegment)
+    
+    // Save transcript to database for analysis
+    try {
+      await saveTranscript(room._id, newSegment, textToUse, roomSettings.segmentTime * 60)
+      console.log('[GEN] Transcript saved to DB')
+    } catch (err) {
+      console.error('[GEN] Failed to save transcript:', err)
+    }
+
+    // Generate questions from the captured text
+    await generateQuestionsFromText(textToUse, newSegment)
+    
+    // DO NOT auto-restart timer - wait for popup to close
+    // Timer will be restarted in onClose handler
   }
 
-  const generateQuestionsFromText = async (text) => {
+  const generateQuestionsFromText = async (text, segmentIndex) => {
     setIsGeneratingQuestions(true)
     try {
       const response = await fetch('/api/questions/generate', {
@@ -248,7 +307,7 @@ function RoomDetailPage() {
           config: {
             numQuestions: roomSettings.questionsPerSegment,
             difficulty: roomSettings.difficulty,
-            ollamaModel: roomSettings.ollamaModel || 'llama3.2'
+            provider: roomSettings.questionProvider || 'minimax'
           }
         })
       })
@@ -258,9 +317,10 @@ function RoomDetailPage() {
       if (data.success && data.questions && data.questions.length > 0) {
         const markedQuestions = data.questions.map(q => ({
           ...q,
-          segmentIndex: currentSegment
+          segmentIndex: segmentIndex
         }))
         setPendingQuestions(markedQuestions)
+        setIsPopupOpen(true)
         setShowQuestionPopup(true)
       } else {
         console.error('No questions generated:', data.error)
@@ -268,7 +328,7 @@ function RoomDetailPage() {
       }
     } catch (error) {
       console.error('Failed to generate questions:', error)
-      alert('Failed to generate questions. Please check if Ollama is running.')
+      alert('Failed to generate questions. Please check if the API is configured.')
     }
     setIsGeneratingQuestions(false)
   }
@@ -379,7 +439,15 @@ function RoomDetailPage() {
       alert('No transcript available to generate questions from.')
       return
     }
-    await generateQuestionsFromText(textToUse)
+    
+    // Clear the transcript after capturing
+    finalTranscriptRef.current = ''
+    setSegmentTranscript('')
+    setTranscript('')
+    
+    const newSegment = currentSegment + 1
+    setCurrentSegment(newSegment)
+    await generateQuestionsFromText(textToUse, newSegment)
   }
 
   const handleApproveQuestion = async (question) => {
@@ -396,13 +464,22 @@ function RoomDetailPage() {
           question: question.question,
           options: question.options,
           explanation: question.explanation,
-          segmentIndex: question.segmentIndex
+          segmentIndex: question.segmentIndex,
+          status: 'approved'
         })
       })
 
       if (response.ok) {
         const data = await response.json()
         setGeneratedQuestions(prev => [data.question, ...prev])
+        
+        // Emit to students via socket
+        if (socket && isConnected && isRoomJoined) {
+          socket.emit('new_question', {
+            roomCode: room.code,
+            question: data.question
+          })
+        }
       }
     } catch (error) {
       console.error('Failed to save question:', error)
@@ -641,11 +718,11 @@ function RoomDetailPage() {
             {/* Settings Dropdown */}
             <div style={{ position: 'relative' }} ref={settingsRef}>
               <button 
-                onClick={() => setShowSettings(!showSettings)} 
+                onClick={() => setShowSettings(true)} 
                 style={{
                   padding: '8px 16px',
-                  background: showSettings ? '#3b82f6' : 'var(--nav-hover)',
-                  color: showSettings ? 'white' : 'var(--text-primary)',
+                  background: 'var(--nav-hover)',
+                  color: 'var(--text-primary)',
                   border: '1px solid var(--border-color)',
                   borderRadius: '8px',
                   fontSize: '14px',
@@ -659,232 +736,15 @@ function RoomDetailPage() {
                 ⚙️ Settings
               </button>
 
-              {showSettings && (
-                <div style={{
-                  position: 'absolute',
-                  top: '100%',
-                  right: 0,
-                  marginTop: '8px',
-                  background: 'var(--bg-card)',
-                  borderRadius: '12px',
-                  boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
-                  border: '1px solid var(--border-color)',
-                  minWidth: '220px',
-                  zIndex: 100,
-                  padding: '16px'
-                }}>
-                  <h4 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                    ⚙️ Room Settings
-                  </h4>
-                  
-                  {/* Segment Time Setting */}
-                  <div style={{ marginBottom: '12px' }}>
-                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                      Segment Time (t)
-                    </label>
-                    <select
-                      value={roomSettings.segmentTime}
-                      onChange={(e) => setRoomSettings(prev => ({ ...prev, segmentTime: parseInt(e.target.value) }))}
-                      style={{
-                        width: '100%',
-                        padding: '6px 10px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--border-color)',
-                        background: 'var(--bg-primary)',
-                        color: 'var(--text-primary)',
-                        fontSize: '13px'
-                      }}
-                    >
-                      {[1, 2, 3, 5, 10, 15, 20, 30].map(t => (
-                        <option key={t} value={t}>{t} min</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Questions per Segment */}
-                  <div style={{ marginBottom: '12px' }}>
-                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                      Questions / Segment
-                    </label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <button
-                        onClick={() => setRoomSettings(prev => ({ ...prev, questionsPerSegment: Math.max(1, prev.questionsPerSegment - 1) }))}
-                        style={{
-                          width: '28px',
-                          height: '28px',
-                          borderRadius: '6px',
-                          border: '1px solid var(--border-color)',
-                          background: 'var(--bg-primary)',
-                          color: 'var(--text-primary)',
-                          cursor: 'pointer',
-                          fontSize: '14px'
-                        }}
-                      >
-                        −
-                      </button>
-                      <span style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-primary)', minWidth: '24px', textAlign: 'center' }}>
-                        {roomSettings.questionsPerSegment}
-                      </span>
-                      <button
-                        onClick={() => setRoomSettings(prev => ({ ...prev, questionsPerSegment: Math.min(10, prev.questionsPerSegment + 1) }))}
-                        style={{
-                          width: '28px',
-                          height: '28px',
-                          borderRadius: '6px',
-                          border: '1px solid var(--border-color)',
-                          background: 'var(--bg-primary)',
-                          color: 'var(--text-primary)',
-                          cursor: 'pointer',
-                          fontSize: '14px'
-                        }}
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Difficulty */}
-                  <div style={{ marginBottom: '12px' }}>
-                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                      Difficulty
-                    </label>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      {['easy', 'medium', 'hard'].map(level => (
-                        <button
-                          key={level}
-                          onClick={() => setRoomSettings(prev => ({ ...prev, difficulty: level }))}
-                          style={{
-                            flex: 1,
-                            padding: '4px',
-                            borderRadius: '4px',
-                            border: roomSettings.difficulty === level ? '2px solid #3b82f6' : '1px solid var(--border-color)',
-                            background: roomSettings.difficulty === level ? '#dbeafe' : 'transparent',
-                            color: roomSettings.difficulty === level ? '#1e40af' : 'var(--text-primary)',
-                            fontSize: '10px',
-                            fontWeight: roomSettings.difficulty === level ? '600' : '400',
-                            cursor: 'pointer',
-                            textTransform: 'capitalize'
-                          }}
-                        >
-                          {level}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Ollama Model */}
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                      Ollama Model
-                    </label>
-                    <select
-                      value={roomSettings.ollamaModel}
-                      onChange={(e) => setRoomSettings(prev => ({ ...prev, ollamaModel: e.target.value }))}
-                      style={{
-                        width: '100%',
-                        padding: '6px 10px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--border-color)',
-                        background: 'var(--bg-primary)',
-                        color: 'var(--text-primary)',
-                        fontSize: '12px'
-                      }}
-                    >
-                      <option value="tinyllama:latest">tinyllama (Lightweight)</option>
-                      <option value="llama3.2">llama3.2 (2GB RAM needed)</option>
-                      <option value="qwen2.5:7b">qwen2.5:7b (4GB RAM needed)</option>
-                      <option value="mistral">mistral (4GB RAM needed)</option>
-                    </select>
-                    <p style={{ margin: '4px 0 0', fontSize: '10px', color: 'var(--text-secondary)' }}>
-                      Server has 4GB RAM total
-                    </p>
-                  </div>
-
-                  {/* Time to Answer (TTA) */}
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                      Time to Answer (TTA)
-                    </label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <button
-                        onClick={() => setRoomSettings(prev => ({ ...prev, timeToAnswer: Math.max(5, (prev.timeToAnswer || 30) - 5) }))}
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '4px',
-                          border: '1px solid var(--border-color)',
-                          background: 'var(--bg-primary)',
-                          color: 'var(--text-primary)',
-                          cursor: 'pointer',
-                          fontSize: '12px'
-                        }}
-                      >
-                        −
-                      </button>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)', minWidth: '40px', textAlign: 'center' }}>
-                        {roomSettings.timeToAnswer || 30}s
-                      </span>
-                      <button
-                        onClick={() => setRoomSettings(prev => ({ ...prev, timeToAnswer: Math.min(300, (prev.timeToAnswer || 30) + 5) }))}
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '4px',
-                          border: '1px solid var(--border-color)',
-                          background: 'var(--bg-primary)',
-                          color: 'var(--text-primary)',
-                          cursor: 'pointer',
-                          fontSize: '12px'
-                        }}
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Points */}
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                      Points
-                    </label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <button
-                        onClick={() => setRoomSettings(prev => ({ ...prev, points: Math.max(1, (prev.points || 10) - 5) }))}
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '4px',
-                          border: '1px solid var(--border-color)',
-                          background: 'var(--bg-primary)',
-                          color: 'var(--text-primary)',
-                          cursor: 'pointer',
-                          fontSize: '12px'
-                        }}
-                      >
-                        −
-                      </button>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)', minWidth: '40px', textAlign: 'center' }}>
-                        {roomSettings.points || 10}
-                      </span>
-                      <button
-                        onClick={() => setRoomSettings(prev => ({ ...prev, points: Math.min(100, (prev.points || 10) + 5) }))}
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '4px',
-                          border: '1px solid var(--border-color)',
-                          background: 'var(--bg-primary)',
-                          color: 'var(--text-primary)',
-                          cursor: 'pointer',
-                          fontSize: '12px'
-                        }}
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
+              <RoomSettingsModal
+                isOpen={showSettings}
+                onClose={() => setShowSettings(false)}
+                settings={roomSettings}
+                onSave={(newSettings) => {
+                  setRoomSettings(newSettings)
+                  setShowSettings(false)
+                }}
+              />
             </div>
 
             {/* End Room Button */}
@@ -905,7 +765,7 @@ function RoomDetailPage() {
           </div>
 
           {/* Microphone and Transcription Row - 30/70 Split */}
-          <div style={{ display: 'flex', gap: '20px', height: '280px', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', gap: '20px', height: '420px', marginBottom: '20px' }}>
             {/* Microphone Card - 30% */}
             <div style={{
               width: '30%',
@@ -1202,7 +1062,14 @@ function RoomDetailPage() {
           questions={pendingQuestions}
           onApprove={handleApproveQuestion}
           onReject={handleRejectQuestion}
-          onClose={() => setShowQuestionPopup(false)}
+          onClose={() => {
+            setShowQuestionPopup(false)
+            setIsPopupOpen(false)
+            // Restart timer if still recording
+            if (isRecording && roomSettings.segmentTime > 0) {
+              startSegmentTimer()
+            }
+          }}
         />
       )}
 

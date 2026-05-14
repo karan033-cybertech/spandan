@@ -91,7 +91,7 @@ function ManageRoomPage() {
                       Code: <strong style={{ color: '#3b82f6', letterSpacing: '1px' }}>{room.code}</strong>
                     </p>
                     <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      {room.questions?.length || 0} questions
+                      {room.questionCount || 0} questions
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>

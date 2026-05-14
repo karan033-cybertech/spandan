@@ -1,6 +1,12 @@
+import dotenv from 'dotenv'
+dotenv.config()
 import Question from '../models/Question.js'
 import Response from '../models/Response.js'
 import Room from '../models/Room.js'
+import { config, AI_PROVIDERS } from '../config.js'
+
+// Re-export for convenience
+export { AI_PROVIDERS }
 
 export const createQuestion = async (data, createdBy) => {
   const question = new Question({
@@ -160,4 +166,321 @@ export const getQuestionResults = async (questionId) => {
     results,
     correctPercentage: Math.round((correctCount / totalResponses) * 100)
   }
+}
+
+// Question Type Mix helper
+function getQuestionTypeMix(numQuestions) {
+  const types = []
+  
+  if (numQuestions === 1) {
+    types.push('MCQ')
+  } else if (numQuestions === 2) {
+    types.push('MCQ', 'TF')
+  } else if (numQuestions === 3) {
+    types.push('MCQ', 'TF', 'MSQ')
+  } else {
+    const mcqCount = Math.round(numQuestions * 0.5)
+    const tfCount = Math.round(numQuestions * 0.3)
+    const msqCount = numQuestions - mcqCount - tfCount
+    
+    for (let i = 0; i < mcqCount; i++) types.push('MCQ')
+    for (let i = 0; i < tfCount; i++) types.push('TF')
+    for (let i = 0; i < msqCount; i++) types.push('MSQ')
+  }
+  
+  return types.slice(0, numQuestions)
+}
+
+// Build prompt for question generation
+function buildQuestionPrompt(transcript, questionTypes, difficulty) {
+  const typeInstructions = questionTypes.map((type, index) => {
+    switch (type) {
+      case 'MCQ':
+        return `${index + 1}. MCQ: Create a multiple choice question with ONE correct answer and 3 wrong options (A, B, C, D). Mark the correct answer.`
+      case 'TF':
+        return `${index + 1}. T/F: Create a True or False question. Mark the correct answer.`
+      case 'MSQ':
+        return `${index + 1}. MSQ: Create a multiple select question with multiple correct answers (2-4 correct options). Mark ALL correct options.`
+      default:
+        return ''
+    }
+  }).join('\n')
+
+  return `You are an expert quiz question generator. Based on the following transcription, generate ${questionTypes.length} quiz questions.
+
+TRANSCRIPTION:
+${transcript}
+
+DIFFICULTY: ${difficulty.toUpperCase()}
+
+QUESTION TYPES (follow exactly):
+${typeInstructions}
+
+OUTPUT FORMAT (respond ONLY with valid JSON):
+{
+  "questions": [
+    {
+      "type": "MCQ",
+      "question": "The question text here?",
+      "options": [
+        { "text": "Option A", "isCorrect": true },
+        { "text": "Option B", "isCorrect": false },
+        { "text": "Option C", "isCorrect": false },
+        { "text": "Option D", "isCorrect": false }
+      ],
+      "explanation": "Brief explanation of the answer"
+    },
+    {
+      "type": "TF",
+      "question": "The statement here?",
+      "options": [
+        { "text": "True", "isCorrect": true },
+        { "text": "False", "isCorrect": false }
+      ],
+      "explanation": "Brief explanation"
+    },
+    {
+      "type": "MSQ",
+      "question": "The question here?",
+      "options": [
+        { "text": "Option A", "isCorrect": true },
+        { "text": "Option B", "isCorrect": false },
+        { "text": "Option C", "isCorrect": true },
+        { "text": "Option D", "isCorrect": false }
+      ],
+      "explanation": "Brief explanation of which options are correct"
+    }
+  ]
+}
+
+IMPORTANT:
+- Respond ONLY with valid JSON, no markdown or additional text
+- Make questions clear and unambiguous
+- Ensure wrong options for MCQ are plausible but clearly wrong
+- For MSQ, ensure at least 2 options are correct
+- Questions should be based ONLY on the transcription content`
+}
+
+// Parse questions from AI response
+function parseQuestions(responseText, expectedTypes) {
+  try {
+    let jsonStr = responseText
+    
+    const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+    if (jsonMatch) {
+      jsonStr = jsonMatch[1]
+    }
+    
+    const objMatch = jsonStr.match(/\{[\s\S]*\}/)
+    if (!objMatch) {
+      throw new Error('No JSON found in response')
+    }
+    
+    const parsed = JSON.parse(objMatch[0])
+    const questions = parsed.questions || []
+    
+    return questions.map((q, index) => ({
+      id: `q_${Date.now()}_${index}`,
+      type: q.type || expectedTypes[index] || 'MCQ',
+      question: q.question || 'Question text missing',
+      options: parseOptions(q.options || [], q.type),
+      explanation: q.explanation || '',
+      segmentIndex: 0,
+      createdAt: new Date().toISOString()
+    }))
+  } catch (error) {
+    console.error('Failed to parse questions:', error)
+    return []
+  }
+}
+
+// Parse options ensuring correct structure
+function parseOptions(options, type) {
+  if (type === 'TF') {
+    return [
+      { text: 'True', isCorrect: false },
+      { text: 'False', isCorrect: false }
+    ]
+  }
+
+  if (!Array.isArray(options) || options.length < 2) {
+    return [
+      { text: 'Option A', isCorrect: true },
+      { text: 'Option B', isCorrect: false },
+      { text: 'Option C', isCorrect: false },
+      { text: 'Option D', isCorrect: false }
+    ]
+  }
+
+  return options.map(opt => ({
+    text: opt.text || opt.option || 'Unknown',
+    isCorrect: opt.isCorrect || opt.correct || false
+  }))
+}
+
+// MiniMax API call
+async function generateWithMiniMax(prompt) {
+  const response = await fetch('https://api.minimax.io/v1/text/chatcompletion_v2', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.minimaxApiKey}`
+    },
+    body: JSON.stringify({
+      model: 'MiniMax-M2.7',
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    })
+  })
+
+
+  if (!response.ok) {
+    const errorData = await response.text()
+    throw new Error(`MiniMax API error: ${response.status} - ${errorData}`)
+  }
+
+  const data = await response.json()
+  return data.choices?.[0]?.message?.content || ''
+}
+
+// OpenAI API call
+async function generateWithOpenAI(prompt, model = 'gpt-4o-mini') {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.openaiApiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    })
+  })
+
+  if (!response.ok) {
+    const errorData = await response.text()
+    throw new Error(`OpenAI API error: ${response.status} - ${errorData}`)
+  }
+
+  const data = await response.json()
+  return data.choices?.[0]?.message?.content || ''
+}
+
+// Anthropic (Claude) API call
+async function generateWithAnthropic(prompt, model = 'claude-sonnet-4-20250514') {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': config.anthropicApiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      max_tokens: 2000,
+      temperature: 0.7
+    })
+  })
+
+  if (!response.ok) {
+    const errorData = await response.text()
+    throw new Error(`Anthropic API error: ${response.status} - ${errorData}`)
+  }
+
+  const data = await response.json()
+  return data.content?.[0]?.text || ''
+}
+
+// Google Gemini API call
+async function generateWithGoogle(prompt, model = 'gemini-2.0-flash') {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.googleApiKey}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            {
+              text: prompt
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 2000
+      }
+    })
+  })
+
+  if (!response.ok) {
+    const errorData = await response.text()
+    throw new Error(`Google API error: ${response.status} - ${errorData}`)
+  }
+
+  const data = await response.json()
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+}
+
+// Main question generation function
+export async function generateQuestions(transcript, cfg) {
+  const { numQuestions = 2, difficulty = 'medium', provider = 'minimax' } = cfg || {}
+
+  if (!transcript || transcript.trim().length === 0) {
+    throw new Error('Transcript is required')
+  }
+
+  const questionTypes = getQuestionTypeMix(numQuestions)
+  const prompt = buildQuestionPrompt(transcript, questionTypes, difficulty)
+
+  console.log(`Generating ${numQuestions} questions with ${provider}...`)
+
+  let responseText
+
+  switch (provider) {
+    case 'minimax':
+      if (!config.minimaxApiKey) throw new Error('MiniMax API key not configured')
+      responseText = await generateWithMiniMax(prompt)
+      break
+    case 'openai':
+      if (!config.openaiApiKey) throw new Error('OpenAI API key not configured')
+      responseText = await generateWithOpenAI(prompt)
+      break
+    case 'anthropic':
+      if (!config.anthropicApiKey) throw new Error('Anthropic API key not configured')
+      responseText = await generateWithAnthropic(prompt)
+      break
+    case 'google':
+      if (!config.googleApiKey) throw new Error('Google API key not configured')
+      responseText = await generateWithGoogle(prompt)
+      break
+    default:
+      throw new Error(`Unknown provider: ${provider}`)
+  }
+
+  const questions = parseQuestions(responseText, questionTypes)
+  console.log(`Generated ${questions.length} questions successfully`)
+
+  return questions
 }

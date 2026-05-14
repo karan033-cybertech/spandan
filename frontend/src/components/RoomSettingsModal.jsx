@@ -1,30 +1,32 @@
 import React, { useState, useEffect } from 'react'
-import { getOllamaModels } from '../services/questionService'
+import { getAIProviders } from '../services/questionService'
 
 const DIFFICULTY_LEVELS = ['easy', 'medium', 'hard']
 const SEGMENT_TIMES = [1, 2, 3, 5, 10, 15, 20, 30]
 
 function RoomSettingsModal({ isOpen, onClose, settings, onSave }) {
   const [localSettings, setLocalSettings] = useState(settings)
-  const [ollamaModels, setOllamaModels] = useState([])
-  const [loadingModels, setLoadingModels] = useState(false)
+  const [providers, setProviders] = useState([])
+  const [loadingProviders, setLoadingProviders] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
       setLocalSettings(settings)
-      loadOllamaModels()
+      loadProviders()
     }
   }, [isOpen, settings])
 
-  const loadOllamaModels = async () => {
-    setLoadingModels(true)
+  const loadProviders = async () => {
+    setLoadingProviders(true)
     try {
-      const models = await getOllamaModels()
-      setOllamaModels(models)
+      const data = await getAIProviders()
+      if (data.success) {
+        setProviders(data.providers)
+      }
     } catch (error) {
-      console.error('Failed to load Ollama models:', error)
+      console.error('Failed to load AI providers:', error)
     }
-    setLoadingModels(false)
+    setLoadingProviders(false)
   }
 
   const handleSave = () => {
@@ -32,38 +34,37 @@ function RoomSettingsModal({ isOpen, onClose, settings, onSave }) {
     onClose()
   }
 
-  const handleQuestionGeneratorChange = (value) => {
-    setLocalSettings(prev => ({
-      ...prev,
-      questionGenerator: value
-    }))
-  }
-
   if (!isOpen) return null
 
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: 'rgba(0, 0, 0, 0.5)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 1000
-    }}>
-      <div style={{
-        background: 'var(--bg-card)',
-        borderRadius: '16px',
-        padding: '24px',
-        width: '480px',
-        maxHeight: '80vh',
-        overflow: 'auto',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-        border: '1px solid var(--border-color)'
-      }}>
+    <div 
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0, 0, 0, 0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000
+      }}
+      onClick={onClose}
+    >
+      <div 
+        style={{
+          background: 'var(--bg-card)',
+          borderRadius: '16px',
+          padding: '24px',
+          width: '480px',
+          maxHeight: '80vh',
+          overflow: 'auto',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          border: '1px solid var(--border-color)'
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div style={{
           display: 'flex',
@@ -242,8 +243,8 @@ function RoomSettingsModal({ isOpen, onClose, settings, onSave }) {
             Question Generator
           </label>
           <select
-            value={localSettings.questionGenerator || 'ollama'}
-            onChange={(e) => handleQuestionGeneratorChange(e.target.value)}
+            value={localSettings.questionProvider || 'minimax'}
+            onChange={(e) => setLocalSettings(prev => ({ ...prev, questionProvider: e.target.value }))}
             style={{
               width: '100%',
               padding: '10px 12px',
@@ -255,47 +256,16 @@ function RoomSettingsModal({ isOpen, onClose, settings, onSave }) {
               cursor: 'pointer'
             }}
           >
-            <option value="ollama">Ollama (Local)</option>
+            {loadingProviders ? (
+              <option value="">Loading providers...</option>
+            ) : (
+              providers.map(p => (
+                <option key={p.id} value={p.id} disabled={!p.enabled}>
+                  {p.icon} {p.name} {!p.enabled && '(No API Key)'}
+                </option>
+              ))
+            )}
           </select>
-          
-          {localSettings.questionGenerator === 'ollama' && (
-            <div style={{ marginTop: '12px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '12px',
-                color: 'var(--text-secondary)'
-              }}>
-                Ollama Model
-              </label>
-              {loadingModels ? (
-                <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Loading models...</p>
-              ) : ollamaModels.length > 0 ? (
-                <select
-                  value={localSettings.ollamaModel || ''}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, ollamaModel: e.target.value }))}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid var(--border-color)',
-                    background: 'var(--bg-primary)',
-                    color: 'var(--text-primary)',
-                    fontSize: '14px'
-                  }}
-                >
-                  <option value="">Select a model...</option>
-                  {ollamaModels.map(model => (
-                    <option key={model} value={model}>{model}</option>
-                  ))}
-                </select>
-              ) : (
-                <p style={{ fontSize: '12px', color: '#ef4444' }}>
-                  Ollama not running. Please start Ollama to use local question generation.
-                </p>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Question Type Distribution */}
@@ -344,6 +314,90 @@ function RoomSettingsModal({ isOpen, onClose, settings, onSave }) {
           <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
             Percentages for question types when generating 4+ questions
           </p>
+        </div>
+
+        {/* Time to Answer (TTA) */}
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{
+            display: 'block',
+            marginBottom: '8px',
+            fontSize: '14px',
+            fontWeight: '500',
+            color: 'var(--text-primary)'
+          }}>
+            Time to Answer (TTA)
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <input
+              type="number"
+              min="0"
+              max="300"
+              value={localSettings.timeToAnswer || 30}
+              onChange={(e) => setLocalSettings(prev => ({ 
+                ...prev, 
+                timeToAnswer: Math.min(300, Math.max(0, parseInt(e.target.value) || 30))
+              }))}
+              style={{
+                width: '100px',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                fontSize: '18px',
+                fontWeight: '600',
+                textAlign: 'center'
+              }}
+            />
+            <span style={{
+              fontSize: '16px',
+              color: 'var(--text-secondary)'
+            }}>
+              seconds (0-300)
+            </span>
+          </div>
+        </div>
+
+        {/* Points */}
+        <div style={{ marginBottom: '24px' }}>
+          <label style={{
+            display: 'block',
+            marginBottom: '8px',
+            fontSize: '14px',
+            fontWeight: '500',
+            color: 'var(--text-primary)'
+          }}>
+            Points per Question
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <input
+              type="number"
+              min="1"
+              max="500"
+              value={localSettings.points || 10}
+              onChange={(e) => setLocalSettings(prev => ({ 
+                ...prev, 
+                points: Math.min(500, Math.max(1, parseInt(e.target.value) || 10))
+              }))}
+              style={{
+                width: '100px',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                fontSize: '18px',
+                fontWeight: '600',
+                textAlign: 'center'
+              }}
+            />
+            <span style={{
+              fontSize: '16px',
+              color: 'var(--text-secondary)'
+            }}>
+              points (1-500)
+            </span>
+          </div>
         </div>
 
         {/* Save Button */}

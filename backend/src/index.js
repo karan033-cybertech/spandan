@@ -12,6 +12,7 @@ import authRoutes from './routes/auth.js'
 import roomRoutes from './routes/rooms.js'
 import questionRoutes from './routes/questions.js'
 import transcriptionRoutes from './routes/transcription.js'
+import transcriptRoutes from './routes/transcripts.js'
 import responseRoutes from './routes/responses.js'
 
 // Import models for reference
@@ -56,6 +57,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/rooms', roomRoutes)
 app.use('/api/questions', questionRoutes)
 app.use('/api/transcription', transcriptionRoutes)
+app.use('/api/transcripts', transcriptRoutes)
 app.use('/api/responses', responseRoutes)
 
 // Health check

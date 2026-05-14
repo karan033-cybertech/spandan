@@ -1,4 +1,5 @@
 import Room from '../models/Room.js'
+import Question from '../models/Question.js'
 
 export const createRoom = async (name, teacherId, settings = {}) => {
   const room = new Room({
@@ -28,7 +29,22 @@ export const getRoomByCode = async (code) => {
 }
 
 export const getRoomsByTeacher = async (teacherId) => {
-  return Room.find({ teacher: teacherId }).sort({ createdAt: -1 })
+  const rooms = await Room.find({ teacher: teacherId }).sort({ createdAt: -1 })
+  
+  // Get question counts for each room
+  const roomIds = rooms.map(r => r._id)
+  const questionCounts = await Question.aggregate([
+    { $match: { roomId: { $in: roomIds } } },
+    { $group: { _id: '$roomId', count: { $sum: 1 } } }
+  ])
+  
+  const countMap = new Map(questionCounts.map(q => [q._id.toString(), q.count]))
+  
+  // Attach questionCount to each room
+  return rooms.map(room => ({
+    ...room.toObject(),
+    questionCount: countMap.get(room._id.toString()) || 0
+  }))
 }
 
 export const updateRoom = async (roomId, updates) => {

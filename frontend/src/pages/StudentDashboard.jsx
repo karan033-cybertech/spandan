@@ -11,7 +11,7 @@ function StudentDashboard() {
   const navigate = useNavigate()
   const { user, token } = useAuthStore()
   const { socket, isConnected, joinRoom, leaveRoom } = useSocketStore()
-  const { rooms, setAuthToken } = useRoomStore()
+  const { joinRoomByCode, setAuthToken } = useRoomStore()
   
   const [roomCode, setRoomCode] = useState('')
   const [isJoining, setIsJoining] = useState(false)
