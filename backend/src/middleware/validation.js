@@ -1,10 +1,15 @@
 import { z } from 'zod'
 
 // Auth validation schemas
+// Strong password: min 8 chars, 1 uppercase, 1 lowercase, 1 digit, 1 special char
+const passwordRegex = /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/
+
 export const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters').max(100),
   email: z.string().email('Please enter a valid email'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  password: z.string()
+    .min(8, 'Password must be at least 8 characters')
+    .refine(val => passwordRegex.test(val), 'Password must contain: 1 uppercase, 1 lowercase, 1 digit, 1 special character'),
   role: z.enum(['teacher', 'student'], {
     errorMap: () => ({ message: 'Role must be either teacher or student' })
   })

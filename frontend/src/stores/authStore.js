@@ -119,6 +119,10 @@ export const useAuthStore = create(
         })
       },
 
+      updateUser: (updatedUser) => {
+        set({ user: updatedUser })
+      },
+
       clearError: () => set({ error: null })
     }),
     {

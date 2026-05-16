@@ -3,255 +3,443 @@ import { useNavigate } from 'react-router-dom'
 import useAuthStore from '../stores/authStore'
 import SpandanIcon from '../components/SpandanIcon'
 import useSocketStore from '../stores/socketStore'
+import PasswordInput from '../components/PasswordInput'
+import ThemeToggle from '../components/ThemeToggle'
+import useThemeStore from '../stores/themeStore'
 
 function AuthPage() {
   const navigate = useNavigate()
-  const { 
-    user, 
-    token, 
-    isAuthenticated, 
-    isLoading, 
+  const {
+    user,
+    token,
+    isAuthenticated,
+    isLoading,
     error,
-    login, 
+    login,
     register,
     logout,
-    clearError 
+    clearError
   } = useAuthStore()
-  
-  const { connect, disconnect } = useSocketStore()
-  
-  const [step, setStep] = useState('auth') // 'auth' | 'role' | 'forgot'
+  const { isDark, toggleTheme } = useThemeStore()
+  const socket = useSocketStore(state => state.socket)
+
+  const [step, setStep] = useState('auth')
   const [isLogin, setIsLogin] = useState(true)
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    password: '',
-    confirmPassword: ''
-  })
-  const [forgotEmail, setForgotEmail] = useState('')
-  const [forgotSent, setForgotSent] = useState(false)
+  const [formData, setFormData] = useState({ name: '', email: '', password: '', confirmPassword: '', role: 'student' })
   const [validationError, setValidationError] = useState('')
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('')
+  const [forgotPasswordMsg, setForgotPasswordMsg] = useState('')
+  const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false)
 
-  // Connect socket when authenticated
   useEffect(() => {
-    if (token && isAuthenticated) {
-      connect(token)
-    } else {
-      disconnect()
+    if (isAuthenticated && token) {
+      navigate(user?.role === 'teacher' ? '/teacher' : '/student')
     }
-  }, [token, isAuthenticated, connect, disconnect])
+  }, [isAuthenticated, token, navigate, user])
 
-  const handleAuthSubmit = async (e) => {
-    e.preventDefault()
-    setValidationError('')
-    clearError()
-
-    // Validate password match for signup
+  const validateForm = () => {
     if (!isLogin && formData.password !== formData.confirmPassword) {
-      setValidationError('Passwords do not match!')
-      return
+      setValidationError('Passwords do not match')
+      return false
     }
+    if (formData.password && formData.password.length < 8) {
+      setValidationError('Password must be at least 8 characters')
+      return false
+    }
+    setValidationError('')
+    return true
+  }
 
-    try {
-      if (isLogin) {
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    clearError()
+    setValidationError('')
+
+    if (!validateForm()) return
+
+    if (isLogin) {
+      try {
         const data = await login(formData.email, formData.password)
-        // Login: navigate directly to appropriate dashboard based on role
-        if (data.user.role === 'teacher') {
+        // Navigate based on actual role from backend response, not local user state
+        if (data.user?.role === 'teacher') {
           navigate('/teacher')
         } else {
           navigate('/student')
         }
-      } else {
-        // Registration: proceed to role selection
-        await register(formData.name, formData.email, formData.password, 'student')
-        setStep('role')
+      } catch (err) {
+        setValidationError(err.message || 'Login failed')
       }
-    } catch (err) {
-      setValidationError(err.message)
+    } else {
+      try {
+        await register(formData.name, formData.email, formData.password, formData.role)
+        // Registration successful - go to login
+        setStep('auth')
+        setIsLogin(true)
+        setFormData({ name: '', email: '', password: '', confirmPassword: '', role: 'student' })
+        setValidationError('')
+      } catch (err) {
+        setValidationError(err.message || 'Registration failed')
+      }
     }
   }
 
-  const handleRoleSelect = async (role) => {
-    try {
-      const { token } = useAuthStore.getState()
-      
-      // Update role on server
-      const response = await fetch('/api/auth/role', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ role })
-      })
-      
-      if (!response.ok) {
-        throw new Error('Failed to update role')
-      }
-      
-      // Update local store
-      useAuthStore.getState().updateRole(role)
-      
-      // Navigate to appropriate dashboard
-      if (role === 'teacher') {
-        navigate('/teacher')
-      } else {
-        navigate('/student')
-      }
-    } catch (error) {
-      setValidationError('Failed to set role. Please try again.')
-    }
+  const handleLogout = () => {
+    logout()
+    navigate('/')
   }
 
-  const handleForgotPassword = (e) => {
+  const handleForgotPassword = async (e) => {
     e.preventDefault()
-    if (!forgotEmail) {
-      setValidationError('Please enter your email address')
-      return
+    setForgotPasswordMsg('')
+    setForgotPasswordLoading(true)
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotPasswordEmail })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to send reset email')
+      setForgotPasswordMsg('✓ Password reset link sent! Check your email.')
+      setForgotPasswordEmail('')
+    } catch (err) {
+      setForgotPasswordMsg(err.message)
+    } finally {
+      setForgotPasswordLoading(false)
     }
-    // Simulate sending reset email
-    setForgotSent(true)
   }
 
-  const resetAuth = () => {
-    setStep('auth')
-    setForgotSent(false)
-    setForgotEmail('')
-    setValidationError('')
-  }
+  // Background gradients for light/dark
+  const bgGradient = isDark
+    ? 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)'
+    : 'linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)'
 
-  const switchMode = () => {
-    setIsLogin(!isLogin)
-    setFormData({ ...formData, confirmPassword: '' })
-    clearError()
-    setValidationError('')
-  }
+  const textColor = isDark ? '#f1f5f9' : '#1e293b'
+  const subTextColor = isDark ? '#94a3b8' : '#64748b'
+  const cardBg = isDark ? 'rgba(30,41,59,0.85)' : 'rgba(255,255,255,0.95)'
+  const cardBorder = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.3)'
 
   return (
     <div style={{
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #f8f9fb 0%, #e0e7ff 100%)',
-      fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif'
+      background: bgGradient,
+      fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
+      display: 'flex',
+      position: 'relative',
+      overflow: 'hidden',
+      transition: 'background 0.5s ease'
     }}>
-      {/* Background decorative elements */}
+      {/* Left side - Branding */}
       <div style={{
-        position: 'fixed',
-        top: '-200px',
-        right: '-200px',
-        width: '600px',
-        height: '600px',
-        background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(139, 92, 246, 0.15))',
-        borderRadius: '50%',
-        filter: 'blur(100px)',
-        animation: 'pulse 8s ease-in-out infinite',
-        pointerEvents: 'none'
-      }} />
-      <div style={{
-        position: 'fixed',
-        bottom: '-200px',
-        left: '-200px',
-        width: '600px',
-        height: '600px',
-        background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1))',
-        borderRadius: '50%',
-        filter: 'blur(100px)',
-        animation: 'pulse 8s ease-in-out infinite 4s',
-        pointerEvents: 'none'
-      }} />
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: '60px',
+        position: 'relative'
+      }}>
+        {/* Big watermark text */}
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%) rotate(-15deg)',
+          fontSize: 'clamp(80px, 12vw, 160px)',
+          fontWeight: '800',
+          color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.15)',
+          whiteSpace: 'nowrap',
+          pointerEvents: 'none',
+          userSelect: 'none',
+          letterSpacing: '-4px'
+        }}>
+          SPANDAN
+        </div>
+        <div style={{
+          position: 'absolute',
+          top: '58%',
+          left: '50%',
+          transform: 'translate(-50%, -50%) rotate(-12deg)',
+          fontSize: 'clamp(60px, 10vw, 120px)',
+          fontWeight: '700',
+          color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.12)',
+          whiteSpace: 'nowrap',
+          pointerEvents: 'none',
+          userSelect: 'none'
+        }}>
+          स्पंदन
+        </div>
 
+        {/* Theme toggle - top left */}
+        <button
+          onClick={toggleTheme}
+          style={{
+            position: 'absolute',
+            top: '32px',
+            left: '32px',
+            background: 'rgba(255,255,255,0.15)',
+            backdropFilter: 'blur(10px)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '12px',
+            padding: '10px 16px',
+            fontSize: '20px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            color: 'white',
+            transition: 'all 0.3s'
+          }}
+        >
+          {isDark ? '☀️' : '🌙'}
+          <span style={{ fontSize: '13px', fontWeight: '600' }}>{isDark ? 'Light' : 'Dark'}</span>
+        </button>
+
+        {/* Icon and brand */}
+        <div style={{
+          width: '100px',
+          height: '100px',
+          background: 'linear-gradient(135deg, #667eea, #764ba2)',
+          borderRadius: '24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: '24px',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          position: 'relative',
+          zIndex: 1
+        }}>
+          <SpandanIcon size={50} />
+        </div>
+        <h1 style={{
+          fontSize: '48px',
+          fontWeight: '800',
+          color: 'white',
+          marginBottom: '16px',
+          textShadow: '0 4px 30px rgba(0,0,0,0.3)',
+          position: 'relative',
+          zIndex: 1
+        }}>
+          Spandan
+        </h1>
+        <p style={{
+          fontSize: '18px',
+          color: 'rgba(255,255,255,0.8)',
+          textAlign: 'center',
+          maxWidth: '400px',
+          lineHeight: '1.6',
+          position: 'relative',
+          zIndex: 1
+        }}>
+          Empowering educators and students with intelligent poll questions, real-time responses, and beautiful analytics.
+        </p>
+
+        {/* Features */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: '16px',
+          marginTop: '48px',
+          maxWidth: '420px',
+          position: 'relative',
+          zIndex: 1
+        }}>
+          {[
+            { icon: '⚡', text: 'AI-Powered Questions' },
+            { icon: '📊', text: 'Live Analytics' },
+            { icon: '🎯', text: 'Multiple Question Types' },
+            { icon: '🔒', text: 'Secure & Private' }
+          ].map((f, i) => (
+            <div key={i} style={{
+              background: 'rgba(255,255,255,0.1)',
+              backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: '12px',
+              padding: '14px 18px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              color: 'white',
+              fontSize: '14px',
+              fontWeight: '500'
+            }}>
+              <span style={{ fontSize: '20px' }}>{f.icon}</span>
+              {f.text}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Right side - Auth Form */}
       <div style={{
-        position: 'relative',
-        minHeight: '100vh',
+        width: '520px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '20px'
+        padding: '40px',
+        position: 'relative'
       }}>
-        {/* Auth Form - First Step */}
-        {step === 'auth' && (
-          <div style={{
-            background: 'white',
-            borderRadius: '24px',
-            padding: '40px',
-            maxWidth: '450px',
-            width: '100%',
-            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.1)',
-            animation: 'fadeInUp 0.5s ease-out'
-          }}>
-            {/* Logo and Title */}
-            <div style={{ textAlign: 'center', marginBottom: '30px' }}>
-              <div style={{
-                width: '70px',
-                height: '70px',
-                background: 'linear-gradient(135deg, #1e40af, #3b82f6)',
-                borderRadius: '18px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 16px',
-                boxShadow: '0 15px 35px rgba(30, 64, 175, 0.25)'
-              }}>
-                <SpandanIcon size={35} />
-              </div>
-              <h1 style={{
-                fontSize: '32px',
-                fontWeight: '700',
-                color: '#1f2937',
-                marginBottom: '8px'
-              }}>
-                Spandan
-              </h1>
-              <p style={{
-                fontSize: '16px',
-                color: '#6b7280'
-              }}>
-                Poll Question Generator
-              </p>
-            </div>
-
-            {/* Form Header */}
-            <h2 style={{
-              fontSize: '26px',
-              fontWeight: '700',
-              color: '#1f2937',
-              textAlign: 'center',
-              marginBottom: '8px'
+        <div style={{
+          background: cardBg,
+          backdropFilter: 'blur(20px)',
+          borderRadius: '24px',
+          padding: '48px',
+          width: '100%',
+          maxWidth: '440px',
+          boxShadow: '0 25px 80px rgba(0,0,0,0.25)',
+          border: `1px solid ${cardBorder}`,
+          animation: 'fadeInUp 0.5s ease-out'
+        }}>
+          {/* Logo and Title */}
+          <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+            <div style={{
+              width: '70px',
+              height: '70px',
+              background: 'linear-gradient(135deg, #667eea, #764ba2)',
+              borderRadius: '18px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 16px',
+              boxShadow: '0 15px 35px rgba(102, 126, 234, 0.35)'
             }}>
-              {isLogin ? 'Welcome Back' : 'Create Account'}
-            </h2>
+              <SpandanIcon size={35} />
+            </div>
+            <h1 style={{
+              fontSize: '28px',
+              fontWeight: '700',
+              color: textColor,
+              marginBottom: '6px'
+            }}>
+              {showForgotPassword ? 'Reset Password' : isLogin ? 'Welcome Back' : 'Create Account'}
+            </h1>
             <p style={{
-              color: '#6b7280',
-              textAlign: 'center',
-              marginBottom: '30px',
+              fontSize: '14px',
+              color: subTextColor
+            }}>
+              {showForgotPassword
+                ? 'Enter your email to receive a reset link'
+                : isLogin
+                  ? 'Sign in to continue to your dashboard'
+                  : 'Join Spandan to start creating polls'}
+            </p>
+          </div>
+
+          {/* Error / Success messages */}
+          {validationError && (
+            <div style={{
+              background: isDark ? 'rgba(239,68,68,0.15)' : '#fef2f2',
+              border: `1px solid ${isDark ? 'rgba(239,68,68,0.3)' : '#fecaca'}`,
+              borderRadius: '10px',
+              padding: '12px 16px',
+              marginBottom: '20px',
+              color: isDark ? '#fca5a5' : '#dc2626',
               fontSize: '14px'
             }}>
-              {isLogin ? 'Sign in to continue' : 'Join Spandan today'}
-            </p>
+              {validationError}
+            </div>
+          )}
 
-            {/* Error Display */}
-            {(error || validationError) && (
-              <div style={{
-                background: '#fef2f2',
-                border: '1px solid #fecaca',
-                borderRadius: '8px',
-                padding: '12px 16px',
-                marginBottom: '20px',
-                color: '#dc2626',
-                fontSize: '14px',
-                textAlign: 'center'
-              }}>
-                {error || validationError}
+          {showForgotPassword ? (
+            <form onSubmit={handleForgotPassword}>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: subTextColor,
+                  marginBottom: '8px'
+                }}>
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  placeholder="Enter your registered email"
+                  value={forgotPasswordEmail}
+                  onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '14px 16px',
+                    fontSize: '16px',
+                    border: `2px solid ${isDark ? '#334155' : '#e2e8f0'}`,
+                    borderRadius: '12px',
+                    outline: 'none',
+                    background: isDark ? '#1e293b' : 'white',
+                    color: textColor,
+                    boxSizing: 'border-box',
+                    transition: 'border-color 0.3s'
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                  onBlur={(e) => e.target.style.borderColor = isDark ? '#334155' : '#e2e8f0'}
+                />
               </div>
-            )}
-
-            <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              {forgotPasswordMsg && (
+                <div style={{
+                  background: forgotPasswordMsg.startsWith('✓')
+                    ? (isDark ? 'rgba(16,185,129,0.15)' : '#ecfdf5')
+                    : (isDark ? 'rgba(239,68,68,0.15)' : '#fef2f2'),
+                  border: `1px solid ${forgotPasswordMsg.startsWith('✓')
+                    ? (isDark ? 'rgba(16,185,129,0.3)' : '#6ee7b7')
+                    : (isDark ? 'rgba(239,68,68,0.3)' : '#fecaca')}`,
+                  borderRadius: '10px',
+                  padding: '12px 16px',
+                  marginBottom: '20px',
+                  color: forgotPasswordMsg.startsWith('✓')
+                    ? (isDark ? '#6ee7b7' : '#059669')
+                    : (isDark ? '#fca5a5' : '#dc2626'),
+                  fontSize: '14px'
+                }}>
+                  {forgotPasswordMsg}
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={forgotPasswordLoading}
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  background: 'linear-gradient(135deg, #667eea, #764ba2)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '12px',
+                  cursor: forgotPasswordLoading ? 'not-allowed' : 'pointer',
+                  opacity: forgotPasswordLoading ? 0.7 : 1,
+                  transition: 'all 0.3s'
+                }}
+              >
+                {forgotPasswordLoading ? 'Sending...' : 'Send Reset Link'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowForgotPassword(false); setForgotPasswordMsg('') }}
+                style={{
+                  width: '100%',
+                  marginTop: '12px',
+                  padding: '12px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  background: 'transparent',
+                  color: subTextColor,
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                Back to login
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit}>
               {!isLogin && (
-                <div>
+                <div style={{ marginBottom: '20px' }}>
                   <label style={{
                     display: 'block',
                     fontSize: '14px',
-                    fontWeight: '500',
-                    color: '#374151',
+                    fontWeight: '600',
+                    color: subTextColor,
                     marginBottom: '8px'
                   }}>
                     Full Name
@@ -261,27 +449,31 @@ function AuthPage() {
                     placeholder="Enter your full name"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    required={!isLogin}
                     style={{
                       width: '100%',
                       padding: '14px 16px',
                       fontSize: '16px',
-                      border: '2px solid #e5e7eb',
+                      border: `2px solid ${isDark ? '#334155' : '#e2e8f0'}`,
                       borderRadius: '12px',
                       outline: 'none',
+                      background: isDark ? '#1e293b' : 'white',
+                      color: textColor,
+                      boxSizing: 'border-box',
                       transition: 'border-color 0.3s'
                     }}
-                    onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-                    onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                    onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                    onBlur={(e) => e.target.style.borderColor = isDark ? '#334155' : '#e2e8f0'}
                   />
                 </div>
               )}
 
-              <div>
+              <div style={{ marginBottom: '20px' }}>
                 <label style={{
                   display: 'block',
                   fontSize: '14px',
-                  fontWeight: '500',
-                  color: '#374151',
+                  fontWeight: '600',
+                  color: subTextColor,
                   marginBottom: '8px'
                 }}>
                   Email Address
@@ -291,98 +483,113 @@ function AuthPage() {
                   placeholder="Enter your email"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  required
                   style={{
                     width: '100%',
                     padding: '14px 16px',
                     fontSize: '16px',
-                    border: '2px solid #e5e7eb',
+                    border: `2px solid ${isDark ? '#334155' : '#e2e8f0'}`,
                     borderRadius: '12px',
                     outline: 'none',
+                    background: isDark ? '#1e293b' : 'white',
+                    color: textColor,
+                    boxSizing: 'border-box',
                     transition: 'border-color 0.3s'
                   }}
-                  onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-                  onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                  onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                  onBlur={(e) => e.target.style.borderColor = isDark ? '#334155' : '#e2e8f0'}
                 />
               </div>
 
-              <div>
+              <div style={{ marginBottom: '20px' }}>
                 <label style={{
                   display: 'block',
                   fontSize: '14px',
-                  fontWeight: '500',
-                  color: '#374151',
+                  fontWeight: '600',
+                  color: subTextColor,
                   marginBottom: '8px'
                 }}>
                   Password
                 </label>
-                <input
-                  type="password"
-                  placeholder="Enter your password"
+                <PasswordInput
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '14px 16px',
-                    fontSize: '16px',
-                    border: '2px solid #e5e7eb',
-                    borderRadius: '12px',
-                    outline: 'none',
-                    transition: 'border-color 0.3s'
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-                  onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                  placeholder="Enter your password"
+                  style={{ background: isDark ? '#1e293b' : 'white' }}
                 />
               </div>
 
               {!isLogin && (
-                <div>
+                <div style={{ marginBottom: '20px' }}>
                   <label style={{
                     display: 'block',
                     fontSize: '14px',
-                    fontWeight: '500',
-                    color: '#374151',
+                    fontWeight: '600',
+                    color: subTextColor,
                     marginBottom: '8px'
                   }}>
                     Confirm Password
                   </label>
-                  <input
-                    type="password"
-                    placeholder="Confirm your password"
+                  <PasswordInput
                     value={formData.confirmPassword}
                     onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '14px 16px',
-                      fontSize: '16px',
-                      border: '2px solid #e5e7eb',
-                      borderRadius: '12px',
-                      outline: 'none',
-                      transition: 'border-color 0.3s'
-                    }}
-                    onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-                    onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                    placeholder="Confirm your password"
+                    style={{ background: isDark ? '#1e293b' : 'white' }}
                   />
                 </div>
               )}
 
-              {isLogin && (
-                <div style={{ textAlign: 'right', marginTop: '-8px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setStep('forgot')}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#3b82f6',
-                      fontSize: '13px',
-                      cursor: 'pointer',
-                      fontWeight: '500'
-                    }}
-                    onMouseOver={(e) => e.target.style.textDecoration = 'underline'}
-                    onMouseOut={(e) => e.target.style.textDecoration = 'none'}
-                  >
-                    Forgot Password?
-                  </button>
+              {!isLogin && (
+                <div style={{ marginBottom: '24px' }}>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: subTextColor,
+                    marginBottom: '8px'
+                  }}>
+                    I am a...
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, role: 'student' })}
+                      style={{
+                        padding: '14px',
+                        fontSize: '15px',
+                        fontWeight: '600',
+                        background: formData.role === 'student'
+                          ? 'linear-gradient(135deg, #667eea, #764ba2)'
+                          : 'transparent',
+                        color: formData.role === 'student' ? 'white' : subTextColor,
+                        border: `2px solid ${formData.role === 'student' ? 'transparent' : (isDark ? '#334155' : '#e2e8f0')}`,
+                        borderRadius: '12px',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s'
+                      }}
+                    >
+                      🎓 Student
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, role: 'teacher' })}
+                      style={{
+                        padding: '14px',
+                        fontSize: '15px',
+                        fontWeight: '600',
+                        background: formData.role === 'teacher'
+                          ? 'linear-gradient(135deg, #667eea, #764ba2)'
+                          : 'transparent',
+                        color: formData.role === 'teacher' ? 'white' : subTextColor,
+                        border: `2px solid ${formData.role === 'teacher' ? 'transparent' : (isDark ? '#334155' : '#e2e8f0')}`,
+                        borderRadius: '12px',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s'
+                      }}
+                    >
+                      👨‍🏫 Teacher
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -392,428 +599,93 @@ function AuthPage() {
                 style={{
                   width: '100%',
                   padding: '16px',
-                  fontSize: '16px',
-                  fontWeight: '600',
+                  fontSize: '17px',
+                  fontWeight: '700',
+                  background: 'linear-gradient(135deg, #667eea, #764ba2)',
                   color: 'white',
-                  background: isLoading 
-                    ? '#9ca3af' 
-                    : 'linear-gradient(135deg, #1e40af, #3b82f6)',
                   border: 'none',
                   borderRadius: '12px',
                   cursor: isLoading ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.3s',
-                  boxShadow: '0 4px 15px rgba(30, 64, 175, 0.3)',
-                  marginTop: '8px'
-                }}
-                onMouseOver={(e) => {
-                  if (!isLoading) {
-                    e.target.style.transform = 'translateY(-2px)'
-                    e.target.style.boxShadow = '0 6px 20px rgba(30, 64, 175, 0.4)'
-                  }
-                }}
-                onMouseOut={(e) => {
-                  e.target.style.transform = 'translateY(0)'
-                  e.target.style.boxShadow = '0 4px 15px rgba(30, 64, 175, 0.3)'
+                  opacity: isLoading ? 0.7 : 1,
+                  boxShadow: '0 8px 25px rgba(102, 126, 234, 0.4)',
+                  transition: 'all 0.3s'
                 }}
               >
                 {isLoading ? 'Please wait...' : (isLogin ? 'Sign In' : 'Create Account')}
               </button>
-            </form>
 
-            <div style={{ marginTop: '24px', textAlign: 'center' }}>
-              <p style={{ color: '#6b7280', fontSize: '14px' }}>
-                {isLogin ? "Don't have an account? " : 'Already have an account? '}
-                <button
-                  onClick={switchMode}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#1e40af',
-                    fontWeight: '600',
-                    cursor: 'pointer',
-                    fontSize: '14px'
-                  }}
-                >
-                  {isLogin ? 'Sign Up' : 'Sign In'}
-                </button>
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Forgot Password Step */}
-        {step === 'forgot' && (
-          <div style={{
-            background: 'white',
-            borderRadius: '24px',
-            padding: '40px',
-            maxWidth: '450px',
-            width: '100%',
-            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.1)',
-            animation: 'fadeInUp 0.5s ease-out'
-          }}>
-            <button
-              onClick={resetAuth}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#6b7280',
-                cursor: 'pointer',
-                fontSize: '14px',
-                marginBottom: '20px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}
-            >
-              ← Back to Sign In
-            </button>
-
-            <div style={{
-              width: '70px',
-              height: '70px',
-              background: 'linear-gradient(135deg, #1e40af, #3b82f6)',
-              borderRadius: '18px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 20px',
-              boxShadow: '0 15px 35px rgba(30, 64, 175, 0.25)'
-            }}>
-              <span style={{ fontSize: '35px' }}>🔑</span>
-            </div>
-
-            {!forgotSent ? (
-              <>
-                <h2 style={{
-                  fontSize: '26px',
-                  fontWeight: '700',
-                  color: '#1f2937',
-                  textAlign: 'center',
-                  marginBottom: '8px'
-                }}>
-                  Forgot Password?
-                </h2>
-                <p style={{
-                  color: '#6b7280',
-                  textAlign: 'center',
-                  marginBottom: '30px',
-                  fontSize: '14px',
-                  lineHeight: '1.5'
-                }}>
-                  Enter your email address and we'll send you a link to reset your password.
-                </p>
-
-                <form onSubmit={handleForgotPassword} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                  <div>
-                    <input
-                      type="email"
-                      placeholder="Enter your email"
-                      value={forgotEmail}
-                      onChange={(e) => setForgotEmail(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '14px 16px',
-                        fontSize: '16px',
-                        border: '2px solid #e5e7eb',
-                        borderRadius: '12px',
-                        outline: 'none'
-                      }}
-                      onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-                      onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
-                    />
-                  </div>
-
+              {isLogin && (
+                <div style={{ textAlign: 'center', marginTop: '20px' }}>
                   <button
-                    type="submit"
+                    type="button"
+                    onClick={() => setShowForgotPassword(true)}
                     style={{
-                      width: '100%',
-                      padding: '16px',
-                      fontSize: '16px',
-                      fontWeight: '600',
-                      color: 'white',
-                      background: 'linear-gradient(135deg, #1e40af, #3b82f6)',
+                      background: 'none',
                       border: 'none',
-                      borderRadius: '12px',
+                      color: '#667eea',
+                      fontSize: '14px',
+                      fontWeight: '600',
                       cursor: 'pointer'
                     }}
                   >
-                    Send Reset Link
+                    Forgot Password?
                   </button>
-                </form>
-              </>
-            ) : (
-              <>
-                <h2 style={{
-                  fontSize: '26px',
-                  fontWeight: '700',
-                  color: '#1f2937',
-                  textAlign: 'center',
-                  marginBottom: '8px'
-                }}>
-                  Check Your Email
-                </h2>
-                <p style={{
-                  color: '#6b7280',
-                  textAlign: 'center',
-                  marginBottom: '30px',
-                  fontSize: '14px',
-                  lineHeight: '1.5'
-                }}>
-                  We've sent a password reset link to <strong>{forgotEmail}</strong>. 
-                  Please check your inbox and click the link to reset your password.
-                </p>
-
-                <div style={{
-                  background: '#eff6ff',
-                  border: '1px solid #bfdbfe',
-                  borderRadius: '12px',
-                  padding: '16px',
-                  marginBottom: '20px',
-                  textAlign: 'center'
-                }}>
-                  <span style={{ fontSize: '24px' }}>📧</span>
-                  <p style={{
-                    color: '#3b82f6',
-                    fontSize: '14px',
-                    marginTop: '8px'
-                  }}>
-                    Didn't receive the email? Check your spam folder or try again.
-                  </p>
                 </div>
+              )}
 
-                <button
-                  onClick={resetAuth}
-                  style={{
-                    width: '100%',
-                    padding: '16px',
-                    fontSize: '16px',
-                    fontWeight: '600',
-                    color: '#1e40af',
-                    background: 'transparent',
-                    border: '2px solid #1e40af',
-                    borderRadius: '12px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Back to Sign In
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Role Selection - Second Step */}
-        {step === 'role' && (
-          <div style={{
-            textAlign: 'center',
-            maxWidth: '900px',
-            width: '100%',
-            animation: 'fadeInUp 0.6s ease-out'
-          }}>
-            <div style={{ marginBottom: '40px' }}>
               <div style={{
-                width: '80px',
-                height: '80px',
-                background: 'linear-gradient(135deg, #1e40af, #3b82f6)',
-                borderRadius: '20px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 20px',
-                boxShadow: '0 20px 40px rgba(30, 64, 175, 0.3)'
+                textAlign: 'center',
+                marginTop: '24px',
+                paddingTop: '24px',
+                borderTop: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
+                color: subTextColor,
+                fontSize: '14px'
               }}>
-                <SpandanIcon size={40} />
+                {isLogin ? (
+                  <>
+                    Don't have an account?{' '}
+                    <button
+                      type="button"
+                      onClick={() => { setIsLogin(false); setValidationError(''); setFormData({ ...formData, confirmPassword: '' }) }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#667eea',
+                        fontWeight: '700',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Sign up
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    Already have an account?{' '}
+                    <button
+                      type="button"
+                      onClick={() => { setIsLogin(true); setValidationError(''); setFormData({ name: '', confirmPassword: '' }) }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#667eea',
+                        fontWeight: '700',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Sign in
+                    </button>
+                  </>
+                )}
               </div>
-              <h1 style={{
-                fontSize: '36px',
-                fontWeight: '700',
-                color: '#1e3c72',
-                marginBottom: '10px'
-              }}>
-                Choose Your Role
-              </h1>
-              <p style={{
-                fontSize: '18px',
-                color: '#6b7280'
-              }}>
-                How will you be using Spandan?
-              </p>
-            </div>
-
-            {/* Role Cards */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-              gap: '24px',
-              marginBottom: '30px'
-            }}>
-              {/* Teacher Card */}
-              <div
-                onClick={() => handleRoleSelect('teacher')}
-                style={{
-                  position: 'relative',
-                  background: 'white',
-                  borderRadius: '24px',
-                  padding: '40px 30px',
-                  cursor: 'pointer',
-                  boxShadow: '0 20px 60px rgba(0, 0, 0, 0.1)',
-                  border: '2px solid transparent',
-                  transition: 'all 0.4s ease',
-                  overflow: 'hidden'
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-10px)'
-                  e.currentTarget.style.boxShadow = '0 30px 80px rgba(0, 0, 0, 0.15)'
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)'
-                  e.currentTarget.style.boxShadow = '0 20px 60px rgba(0, 0, 0, 0.1)'
-                }}
-              >
-                <div style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  background: 'linear-gradient(135deg, transparent, rgba(59, 130, 246, 0.1), transparent)',
-                  transform: 'translateX(-100%)',
-                  animation: 'shimmer 3s ease-in-out infinite'
-                }} />
-                
-                <div style={{ position: 'relative', textAlign: 'center' }}>
-                  <div style={{ fontSize: '60px', marginBottom: '20px' }}>👨‍🏫</div>
-                  <h3 style={{ fontSize: '24px', fontWeight: '700', color: '#1f2937', marginBottom: '10px' }}>
-                    Teacher
-                  </h3>
-                  <p style={{ color: '#6b7280', marginBottom: '20px', lineHeight: '1.6' }}>
-                    Create and manage polls for your classroom
-                  </p>
-                  <ul style={{ textAlign: 'left', color: '#6b7280', fontSize: '14px', marginBottom: '25px', listStyle: 'none', padding: 0 }}>
-                    <li style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#3b82f6' }}>✓</span> Create assessment spaces
-                    </li>
-                    <li style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#3b82f6' }}>✓</span> Generate AI-powered questions
-                    </li>
-                    <li style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#3b82f6' }}>✓</span> View real-time results
-                    </li>
-                    <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#3b82f6' }}>✓</span> Track student performance
-                    </li>
-                  </ul>
-                  <button style={{
-                    width: '100%',
-                    padding: '14px 24px',
-                    background: 'linear-gradient(135deg, #1e40af, #3b82f6)',
-                    color: 'white',
-                    fontWeight: '600',
-                    borderRadius: '50px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 15px rgba(59, 130, 246, 0.4)'
-                  }}>
-                    I'm a Teacher
-                  </button>
-                </div>
-              </div>
-
-              {/* Student Card */}
-              <div
-                onClick={() => handleRoleSelect('student')}
-                style={{
-                  position: 'relative',
-                  background: 'white',
-                  borderRadius: '24px',
-                  padding: '40px 30px',
-                  cursor: 'pointer',
-                  boxShadow: '0 20px 60px rgba(0, 0, 0, 0.1)',
-                  border: '2px solid transparent',
-                  transition: 'all 0.4s ease',
-                  overflow: 'hidden'
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-10px)'
-                  e.currentTarget.style.boxShadow = '0 30px 80px rgba(0, 0, 0, 0.15)'
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)'
-                  e.currentTarget.style.boxShadow = '0 20px 60px rgba(0, 0, 0, 0.1)'
-                }}
-              >
-                <div style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  background: 'linear-gradient(135deg, transparent, rgba(16, 185, 129, 0.1), transparent)',
-                  transform: 'translateX(-100%)',
-                  animation: 'shimmer 3s ease-in-out infinite 0.5s'
-                }} />
-                
-                <div style={{ position: 'relative', textAlign: 'center' }}>
-                  <div style={{ fontSize: '60px', marginBottom: '20px' }}>👨‍🎓</div>
-                  <h3 style={{ fontSize: '24px', fontWeight: '700', color: '#1f2937', marginBottom: '10px' }}>
-                    Student
-                  </h3>
-                  <p style={{ color: '#6b7280', marginBottom: '20px', lineHeight: '1.6' }}>
-                    Join polls and track your engagement
-                  </p>
-                  <ul style={{ textAlign: 'left', color: '#6b7280', fontSize: '14px', marginBottom: '25px', listStyle: 'none', padding: 0 }}>
-                    <li style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#10b981' }}>✓</span> Join poll sessions
-                    </li>
-                    <li style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#10b981' }}>✓</span> Submit answers live
-                    </li>
-                    <li style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#10b981' }}>✓</span> View instant results
-                    </li>
-                    <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#10b981' }}>✓</span> Track your scores
-                    </li>
-                  </ul>
-                  <button style={{
-                    width: '100%',
-                    padding: '14px 24px',
-                    background: 'linear-gradient(135deg, #059669, #10b981)',
-                    color: 'white',
-                    fontWeight: '600',
-                    borderRadius: '50px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 15px rgba(16, 185, 129, 0.4)'
-                  }}>
-                    I'm a Student
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <p style={{ color: '#9ca3af', fontSize: '14px' }}>
-              You can change your role later in account settings
-            </p>
-          </div>
-        )}
+            </form>
+          )}
+        </div>
       </div>
 
-      {/* Animations */}
       <style>{`
         @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(30px); }
+          from { opacity: 0; transform: translateY(20px); }
           to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes shimmer {
-          0% { transform: translateX(-100%) translateY(-100%) rotate(45deg); }
-          50% { opacity: 1; }
-          100% { transform: translateX(100%) translateY(100%) rotate(45deg); }
-        }
-        @keyframes pulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.1); }
         }
       `}</style>
     </div>

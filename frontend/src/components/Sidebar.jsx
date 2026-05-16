@@ -139,7 +139,7 @@ export default function Sidebar({ user }) {
             <div style={{
               width: '36px',
               height: '36px',
-              background: 'linear-gradient(135deg, #1e40af, #3b82f6)',
+              background: user?.profileImage ? 'transparent' : 'linear-gradient(135deg, #1e40af, #3b82f6)',
               borderRadius: '50%',
               display: 'flex',
               alignItems: 'center',
@@ -147,9 +147,14 @@ export default function Sidebar({ user }) {
               color: 'white',
               fontSize: '14px',
               fontWeight: '600',
-              flexShrink: 0
+              flexShrink: 0,
+              overflow: 'hidden'
             }}>
-              {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+              {user?.profileImage ? (
+                <img src={user.profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                user?.name?.charAt(0)?.toUpperCase() || 'U'
+              )}
             </div>
             <div style={{ overflow: 'hidden' }}>
               <p style={{ margin: 0, fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

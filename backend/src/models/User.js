@@ -27,13 +27,69 @@ const userSchema = new mongoose.Schema({
     enum: ['teacher', 'student'],
     required: [true, 'Role is required']
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
+  profileImage: {
+    type: String,
+    default: ''
   },
-  updatedAt: {
+  phone: {
+    type: String,
+    default: ''
+  },
+  bio: {
+    type: String,
+    default: '',
+    maxlength: [500, 'Bio cannot exceed 500 characters']
+  },
+  dateOfBirth: {
     type: Date,
-    default: Date.now
+    default: null
+  },
+  gender: {
+    type: String,
+    enum: ['', 'male', 'female', 'other'],
+    default: ''
+  },
+  address: {
+    street: { type: String, default: '' },
+    city: { type: String, default: '' },
+    state: { type: String, default: '' },
+    zipCode: { type: String, default: '' },
+    country: { type: String, default: '' }
+  },
+  socialLinks: {
+    twitter: { type: String, default: '' },
+    linkedin: { type: String, default: '' },
+    github: { type: String, default: '' }
+  },
+  // For students
+  enrollmentNumber: {
+    type: String,
+    default: ''
+  },
+  class: {
+    type: String,
+    default: ''
+  },
+  // For teachers
+  department: {
+    type: String,
+    default: ''
+  },
+  employeeId: {
+    type: String,
+    default: ''
+  },
+  qualifications: {
+    type: String,
+    default: ''
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  lastLogin: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true

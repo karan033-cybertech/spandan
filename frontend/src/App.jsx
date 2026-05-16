@@ -4,6 +4,7 @@ import useThemeStore from './stores/themeStore'
 import useAuthStore from './stores/authStore'
 import useSocketStore from './stores/socketStore'
 import AuthPage from './pages/AuthPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
 import DashboardPage from './pages/DashboardPage'
 import StudentDashboard from './pages/StudentDashboard'
 import RoomDetailPage from './pages/RoomDetailPage'
@@ -43,6 +44,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<AuthPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/teacher" element={<DashboardPage />} />
         <Route path="/teacher/create-room" element={<CreateRoomPage />} />
         <Route path="/teacher/manage-room" element={<ManageRoomPage />} />

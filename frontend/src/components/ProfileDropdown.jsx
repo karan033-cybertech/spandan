@@ -38,8 +38,8 @@ export default function ProfileDropdown() {
           width: '36px',
           height: '36px',
           borderRadius: '50%',
-          background: 'linear-gradient(135deg, #1e40af, #3b82f6)',
-          border: 'none',
+          background: user?.profileImage ? 'transparent' : 'linear-gradient(135deg, #1e40af, #3b82f6)',
+          border: '2px solid white',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
@@ -47,11 +47,16 @@ export default function ProfileDropdown() {
           color: 'white',
           fontSize: '14px',
           fontWeight: '600',
-          padding: 0
+          padding: 0,
+          overflow: 'hidden'
         }}
         title="Profile"
       >
-        {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+        {user?.profileImage ? (
+          <img src={user.profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : (
+          user?.name?.charAt(0)?.toUpperCase() || 'U'
+        )}
       </button>
 
       {isOpen && (

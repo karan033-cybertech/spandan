@@ -1,10 +1,15 @@
 import express from 'express'
-import { register, login, getUserById, checkEmailExists, updateUserRole } from '../services/authService.js'
+import { register, login, getUserById, checkEmailExists, updateUserRole, updateProfile, resetOwnPassword } from '../services/authService.js'
+import { generateResetToken, verifyResetToken, resetPassword } from '../services/passwordService.js'
+import { sendResetPasswordEmail } from '../services/emailService.js'
 import { generateToken } from '../middleware/auth.js'
 import { validate, registerSchema, loginSchema } from '../middleware/validation.js'
 import { authenticate } from '../middleware/auth.js'
 
 const router = express.Router()
+
+// Strong password: min 8 chars, 1 uppercase, 1 lowercase, 1 digit, 1 special char
+const passwordRegex = /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/
 
 // Register new user
 router.post('/register', validate(registerSchema), async (req, res) => {
@@ -75,6 +80,99 @@ router.get('/check-email/:email', async (req, res) => {
     res.json({ available: !exists })
   } catch (error) {
     res.status(500).json({ error: error.message })
+  }
+})
+
+// Forgot password - send reset email
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' })
+    }
+    
+    // Check if user exists
+    const user = await checkEmailExists(email)
+    if (!user) {
+      // Don't reveal whether email exists for security
+      return res.json({ message: 'If an account exists with this email, a reset link has been sent.' })
+    }
+    
+    // Get user object for the email
+    const { getUserByEmail } = await import('../services/authService.js')
+    const userObj = await getUserByEmail(email)
+    
+    // Generate reset token
+    const token = generateResetToken(email)
+    
+    // Send reset email
+    await sendResetPasswordEmail(email, token)
+    
+    res.json({ message: 'If an account exists with this email, a reset link has been sent.' })
+  } catch (error) {
+    console.error('Forgot password error:', error)
+    res.status(500).json({ error: 'Failed to process request' })
+  }
+})
+
+// Reset password with token
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, password } = req.body
+    
+    if (!token || !password) {
+      return res.status(400).json({ error: 'Token and new password are required' })
+    }
+    
+    if (!passwordRegex.test(password)) {
+      return res.status(400).json({ error: 'Password must contain: 1 uppercase, 1 lowercase, 1 digit, 1 special character (min 8 chars)' })
+    }
+    
+    // Verify token and reset password
+    await resetPassword(token, password)
+    
+    res.json({ message: 'Password has been reset successfully. You can now login with your new password.' })
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Invalid or expired token' })
+  }
+})
+
+// Update user profile
+router.put('/profile', authenticate, async (req, res) => {
+  try {
+    const updatedUser = await updateProfile(req.user._id, req.body)
+    res.json({ 
+      message: 'Profile updated successfully',
+      user: updatedUser.toJSON()
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+// Reset own password (requires old password verification)
+router.put('/password', authenticate, async (req, res) => {
+  try {
+    const { oldPassword, newPassword, confirmPassword } = req.body
+    
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: 'All password fields are required' })
+    }
+    
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json({ error: 'Password must contain: 1 uppercase, 1 lowercase, 1 digit, 1 special character (min 8 chars)' })
+    }
+    
+    if (oldPassword === newPassword) {
+      return res.status(400).json({ error: 'New password cannot be the same as current password' })
+    }
+    
+    await resetOwnPassword(req.user._id, oldPassword, newPassword)
+    
+    res.json({ message: 'Password updated successfully' })
+  } catch (error) {
+    res.status(400).json({ error: error.message })
   }
 })
 

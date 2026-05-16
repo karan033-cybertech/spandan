@@ -1,4 +1,5 @@
 import User from '../models/User.js'
+import { sendWelcomeEmail } from './emailService.js'
 
 export const register = async (name, email, password, role) => {
   // Check if user already exists
@@ -16,6 +17,12 @@ export const register = async (name, email, password, role) => {
   })
 
   await user.save()
+  
+  // Send welcome email asynchronously (don't block the response)
+  sendWelcomeEmail(email, name, role).catch(err => {
+    console.error('Failed to send welcome email:', err.message)
+  })
+  
   return user
 }
 
@@ -60,6 +67,23 @@ export const checkEmailExists = async (email) => {
   const user = await User.findOne({ email: email.toLowerCase() })
   return !!user
 }
+
+export const resetOwnPassword = async (userId, oldPassword, newPassword) => {
+  const user = await User.findById(userId)
+  if (!user) {
+    throw new Error('User not found')
+  }
+
+  const isMatch = await user.comparePassword(oldPassword)
+  if (!isMatch) {
+    throw new Error('Current password is incorrect')
+  }
+
+  user.password = newPassword
+  await user.save()
+  return true
+}
+
 export const updateUserRole = async (userId, role) => {
   const user = await User.findById(userId)
   if (!user) {
@@ -67,6 +91,39 @@ export const updateUserRole = async (userId, role) => {
   }
   
   user.role = role
+  await user.save()
+  return user
+}
+
+export const updateProfile = async (userId, profileData) => {
+  const user = await User.findById(userId)
+  if (!user) {
+    throw new Error('User not found')
+  }
+
+  // Allowed fields to update
+  const allowedFields = [
+    'name', 'profileImage', 'phone', 'bio', 'dateOfBirth', 'gender',
+    'address', 'socialLinks', 'enrollmentNumber', 'class',
+    'department', 'employeeId', 'qualifications'
+  ]
+
+  for (const field of allowedFields) {
+    if (profileData[field] !== undefined) {
+      user[field] = profileData[field]
+    }
+  }
+
+  // Handle nested address object
+  if (profileData.address) {
+    user.address = { ...user.address.toObject(), ...profileData.address }
+  }
+
+  // Handle nested socialLinks object
+  if (profileData.socialLinks) {
+    user.socialLinks = { ...user.socialLinks.toObject(), ...profileData.socialLinks }
+  }
+
   await user.save()
   return user
 }
