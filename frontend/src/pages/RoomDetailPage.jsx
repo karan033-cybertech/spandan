@@ -11,6 +11,7 @@ import CreateQuestionOverlay from '../components/CreateQuestionOverlay'
 import RoomSettingsModal from '../components/RoomSettingsModal'
 import Leaderboard from '../components/Leaderboard'
 import { saveTranscript } from '../services/transcriptService'
+import { transcribeAudio, getTranscriptionStatus, convertWebMToWav } from '../services/serverTranscriptionService'
 
 function RoomDetailPage() {
   const { roomId } = useParams()
@@ -34,9 +35,13 @@ function RoomDetailPage() {
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [modelStatus, setModelStatus] = useState('Ready')
   
-  // Web Speech API refs
-  const recognitionRef = useRef(null)
+  // MediaRecorder refs for server-side Whisper transcription
+  const mediaRecorderRef = useRef(null)
+  const audioChunksRef = useRef([])
+  const streamRef = useRef(null)
+  const transcriptionIntervalRef = useRef(null)
   const finalTranscriptRef = useRef('')
+  const accumulatedTranscriptRef = useRef('')
 
   // Segment tracking
   const [currentSegment, setCurrentSegment] = useState(0)
@@ -73,7 +78,7 @@ function RoomDetailPage() {
     if (token) {
       setAuthToken(token)
       loadRoom()
-      initSpeechRecognition()
+      checkServerTranscription()
     }
     
     return () => {
@@ -164,68 +169,18 @@ function RoomDetailPage() {
 
 
 
-  const initSpeechRecognition = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    
-    if (!SpeechRecognition) {
-      setModelStatus('Not supported')
-      return
-    }
-
-    recognitionRef.current = new SpeechRecognition()
-    recognitionRef.current.continuous = true
-    recognitionRef.current.interimResults = true
-    recognitionRef.current.lang = 'en-US'
-
-    recognitionRef.current.onstart = () => {
-      console.log('Speech recognition started')
-      setIsTranscribing(true)
-    }
-
-    recognitionRef.current.onresult = (event) => {
-      let interimTranscript = ''
-      let finalTranscript = ''
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcriptPiece = event.results[i][0].transcript
-        if (event.results[i].isFinal) {
-          finalTranscript += transcriptPiece + ' '
-        } else {
-          interimTranscript += transcriptPiece
-        }
-      }
-
-      if (finalTranscript) {
-        finalTranscriptRef.current += finalTranscript + ' '
-        const newText = finalTranscriptRef.current + interimTranscript
-        setTranscript(newText)
-        setSegmentTranscript(prev => prev + ' ' + finalTranscript)
+  // Check server transcription status on mount
+  const checkServerTranscription = async () => {
+    try {
+      const status = await getTranscriptionStatus()
+      if (status.status === 'ready') {
+        setModelStatus('Server Ready')
       } else {
-        setTranscript(finalTranscriptRef.current + interimTranscript)
+        setModelStatus('Server Loading...')
       }
-    }
-
-    recognitionRef.current.onerror = (event) => {
-      console.error('Speech recognition error:', event.error)
-      if (event.error === 'not-allowed') {
-        setModelStatus('Microphone access denied')
-      }
-    }
-
-    recognitionRef.current.onend = () => {
-      console.log('Speech recognition ended')
-      if (isSegmentPaused) {
-        // Timer is paused - don't auto-restart
-        console.log('[TRANSCRIPT] Paused - waiting for popup to close')
-      } else if (isRecording) {
-        // Auto-restart if still recording and not paused
-        try {
-          recognitionRef.current?.start()
-        } catch (e) {
-          setIsRecording(false)
-          setIsTranscribing(false)
-        }
-      }
+    } catch (error) {
+      console.error('Failed to check transcription status:', error)
+      setModelStatus('Server Error')
     }
   }
 
@@ -470,35 +425,102 @@ function RoomDetailPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const startRecording = () => {
-    if (!recognitionRef.current) {
-      alert('Speech recognition is not supported in your browser.')
-      return
-    }
-
+  // Send accumulated audio for transcription
+  const sendForTranscription = useCallback(async () => {
+    if (audioChunksRef.current.length === 0) return
+    
+    const webmBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+    audioChunksRef.current = [] // Clear after capturing
+    
     try {
+      // Convert WebM to WAV (16kHz mono) for Whisper
+      const wavBlob = await convertWebMToWav(webmBlob)
+      const result = await transcribeAudio(wavBlob)
+      if (result.text && result.text.trim()) {
+        const text = result.text.trim()
+        finalTranscriptRef.current += text + ' '
+        accumulatedTranscriptRef.current += text + ' '
+        setTranscript(finalTranscriptRef.current)
+        setSegmentTranscript(prev => prev + ' ' + text)
+      }
+    } catch (error) {
+      console.error('Transcription error:', error)
+    }
+  }, [room?._id])
+
+  const startRecording = async () => {
+    try {
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      
+      // Initialize MediaRecorder
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      mediaRecorderRef.current = mediaRecorder
+      audioChunksRef.current = []
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+      
+      mediaRecorder.onerror = (error) => {
+        console.error('MediaRecorder error:', error)
+        setModelStatus('Recording error')
+      }
+      
+      // Start recording
+      mediaRecorder.start(1000) // Collect data every second
+      
+      // Initialize segment
       finalTranscriptRef.current = transcript
+      accumulatedTranscriptRef.current = ''
       setCurrentSegment(1)
       setSegmentTranscript('')
-      recognitionRef.current.start()
-      setIsRecording(true)
-      setModelStatus('Listening...')
-    } catch (error) {
-      console.error('Error starting speech recognition:', error)
+      
       setIsRecording(true)
       setIsTranscribing(true)
+      setModelStatus('Listening...')
+      
+      // Start periodic transcription (every 5 seconds)
+      transcriptionIntervalRef.current = setInterval(() => {
+        sendForTranscription()
+      }, 5000)
+      
+    } catch (error) {
+      console.error('Error starting recording:', error)
+      setModelStatus('Microphone access denied')
     }
   }
 
   const stopRecording = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop()
-      } catch (e) {}
+    // Stop periodic transcription
+    if (transcriptionIntervalRef.current) {
+      clearInterval(transcriptionIntervalRef.current)
+      transcriptionIntervalRef.current = null
     }
+    
+    // Send any remaining audio
+    if (audioChunksRef.current.length > 0) {
+      sendForTranscription()
+    }
+    
+    // Stop MediaRecorder
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop()
+    }
+    
+    // Stop all tracks
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+    }
+    
     if (segmentTimerRef.current) {
       clearInterval(segmentTimerRef.current)
     }
+    
     setIsRecording(false)
     setIsTranscribing(false)
     setModelStatus('Ready')
