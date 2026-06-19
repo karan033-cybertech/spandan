@@ -43,7 +43,15 @@ function AuthPage() {
   const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false)
   const [showPasswordReqs, setShowPasswordReqs] = useState(false)
 
+  // Reset form data whenever login/registration mode switches
+  useEffect(() => {
+    setFormData({ name: '', email: '', password: '', confirmPassword: '', role: 'student' })
+    setShowPasswordReqs(false)
+    setValidationError('')
+  }, [isLogin])
+
   const getPasswordReqs = (password) => {
+    if (password == null) return PASSWORD_REQUIREMENTS.map(req => ({ ...req, met: false }))
     return PASSWORD_REQUIREMENTS.map((req) => ({
       ...req,
       met: req.test(password),
@@ -95,6 +103,7 @@ function AuthPage() {
       try {
         await register(formData.name, formData.email, formData.password, formData.role)
         // Registration successful - go to login
+        logout() // Clear auth state so useEffect doesn't redirect prematurely
         setStep('auth')
         setIsLogin(true)
         setFormData({ name: '', email: '', password: '', confirmPassword: '', role: 'student' })

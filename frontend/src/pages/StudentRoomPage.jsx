@@ -30,16 +30,15 @@ function StudentRoomPage() {
   const timerIntervalRef = useRef(null)
 
   useEffect(() => {
-    if (token) {
-      setAuthToken(token)
-      joinSession()
-    }
+    if (!token || !socket) return
+    setAuthToken(token)
+    joinSession()
     return () => {
       if (room?.code) {
         leaveRoom(room.code, user._id)
       }
     }
-  }, [])
+  }, [token, socket])
 
 
 
@@ -144,10 +143,27 @@ function StudentRoomPage() {
     try {
       const roomData = await joinRoomByCode(roomCode)
       setRoom(roomData)
-      if (user?._id) {
-        joinRoom(roomData.code, user._id)
-        // Fetch past responses for this student in this room
-        fetchPastResponses(roomData._id, user._id)
+      if (user?._id && socket) {
+        // Join via socket - room:joined confirms the student was added to RoomMember
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            socket.off('room:joined', handleRoomJoined)
+            // Still fetch even if timeout - RoomMember should already exist from HTTP join
+            fetchPastResponses(roomData._id, user._id)
+            resolve()
+          }, 3000)
+
+          const handleRoomJoined = (data) => {
+            if (data.roomCode === roomData.code) {
+              clearTimeout(timeout)
+              socket.off('room:joined', handleRoomJoined)
+              fetchPastResponses(roomData._id, user._id)
+              resolve()
+            }
+          }
+          socket.on('room:joined', handleRoomJoined)
+          joinRoom(roomData.code, user._id)
+        })
       }
     } catch (err) {
       setError(err.message)

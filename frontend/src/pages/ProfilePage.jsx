@@ -232,7 +232,7 @@ function ProfilePage() {
         <header style={{ background: 'var(--header-bg)', color: 'white', padding: '16px 32px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>My Profile</h1>
+              <h1 style={{ margin: 0, fontSize: '20px', fontWeight: '700' }}>Profile</h1>
             </div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <ThemeToggle />

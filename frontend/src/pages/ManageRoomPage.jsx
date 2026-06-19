@@ -78,8 +78,9 @@ function ManageRoomPage() {
                     display: 'flex',
                     flexDirection: 'column',
                     padding: '20px',
-                    background: 'var(--nav-hover)',
+                    background: 'var(--bg-card)',
                     borderRadius: '16px',
+                    border: '1px solid var(--border-color)',
                     minHeight: '140px'
                   }}
                 >

@@ -49,13 +49,18 @@ const io = new Server(httpServer, {
   path: '/spandan/socket.io',
   cors: {
     origin: (origin, callback) => {
-      if (!origin || CORS_ORIGINS.includes(origin) || origin.startsWith('http://localhost')) {
-        callback(null, true)
-      } else {
-        callback(new Error('Not allowed by CORS'))
+      // Allow requests with no origin (mobile apps, curl, Socket.IO polling)
+      if (!origin) return callback(null, true)
+      // Allow if origin is in the explicit CORS_ORIGINS list
+      if (CORS_ORIGINS.includes(origin)) return callback(null, true)
+      // Allow any localhost origin (covers localhost:5173, :8080, :3001, etc.)
+      if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+        return callback(null, true)
       }
+      callback(new Error('Not allowed by CORS'))
     },
-    methods: ['GET', 'POST']
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 })
 

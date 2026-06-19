@@ -79,12 +79,20 @@ router.get('/:id', authenticate, async (req, res) => {
 // Join room by code (for students)
 router.get('/join/:code', authenticate, authorize('student'), async (req, res) => {
   try {
+    const RoomMember = (await import('../models/RoomMember.js')).default
     const room = await getRoomByCode(req.params.code)
     
     // Check if room has ended
     if (room.endedAt) {
       return res.status(400).json({ error: 'This room has ended and can no longer be joined' })
     }
+    
+    // Ensure student is added to RoomMember (idempotent - safe to call multiple times)
+    await RoomMember.findOneAndUpdate(
+      { roomId: room._id, studentId: req.user._id },
+      { roomId: room._id, studentId: req.user._id, joinedAt: new Date() },
+      { upsert: true, new: true }
+    )
     
     res.json({ room })
   } catch (error) {
