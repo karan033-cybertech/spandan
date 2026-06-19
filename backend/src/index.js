@@ -46,7 +46,6 @@ const requestTimeout = (req, res, next) => {
 const app = express()
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
-  path: '/spandan/socket.io',
   cors: {
     origin: (origin, callback) => {
       // Allow requests with no origin (mobile apps, curl, Socket.IO polling)
