@@ -4,6 +4,8 @@ import { authenticate } from '../middleware/auth.js'
 import { authorize, requireApprovedTeacher } from '../middleware/auth.js'
 import { validate, createRoomSchema } from '../middleware/validation.js'
 import { rebuildSnapshot } from '../services/resultsSnapshot.js'
+import { checkRoomOwnership, checkRoomEditor } from '../utils/roomOwnership.js'
+
 
 const router = express.Router()
 
@@ -55,18 +57,44 @@ router.get('/', authenticate, async (req, res) => {
   }
 })
 
+// Get active rooms where current teacher is a co-host
+router.get('/teacher/cohost/active', authenticate, authorize('teacher'), async (req, res) => {
+  try {
+    const Room = (await import('../models/Room.js')).default
+    const rooms = await Room.find({
+      'coHosts.userId': req.user._id,
+      endedAt: null
+    }).populate('teacher', 'name email').sort({ createdAt: -1 })
+    res.json({ rooms })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+// Get room history where current teacher was/is a co-host
+router.get('/teacher/cohost/history', authenticate, authorize('teacher'), async (req, res) => {
+  try {
+    const Room = (await import('../models/Room.js')).default
+    const rooms = await Room.find({
+      'coHosts.userId': req.user._id
+    }).populate('teacher', 'name email').sort({ createdAt: -1 })
+    res.json({ rooms })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
 // Get room by ID
 router.get('/:id', authenticate, async (req, res) => {
   try {
     const room = await getRoomById(req.params.id)
     const RoomMember = (await import('../models/RoomMember.js')).default
     
-    // Check if user is the room teacher (owner) or a student member
-    const isOwner = room.teacher._id.toString() === req.user._id.toString()
+    // Check if user is the room owner/co-host OR a student member
+    const editorAuth = checkRoomEditor(room, req.user._id)
     const isStudentMember = await RoomMember.findOne({ roomId: req.params.id, studentId: req.user._id })
     
-    // Only the room owner OR room members can access
-    if (!isOwner && !isStudentMember) {
+    if (!editorAuth.ok && !isStudentMember) {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -131,8 +159,29 @@ router.put('/:id', authenticate, authorize('teacher'), requireApprovedTeacher, a
   try {
     const room = await getRoomById(req.params.id)
     
-    if (room.teacher._id.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Only the room owner can update the room' })
+    const editorAuth = checkRoomEditor(room, req.user._id)
+    if (!editorAuth.ok) {
+      return res.status(editorAuth.status).json({ error: editorAuth.error })
+    }
+
+    // Owner-only operations check:
+    // - Ending room (isActive = false)
+    // - Updating maxCoHosts, coHostCode, coHostCodeExpiresAt, or coHosts
+    const isEndingRoom = req.body.isActive === false
+    const isCoHostConfigChange = req.body.maxCoHosts !== undefined || req.body.coHostCode !== undefined || req.body.coHosts !== undefined
+
+    if (isEndingRoom || isCoHostConfigChange) {
+      const ownerAuth = checkRoomOwnership(room, req.user._id)
+      if (!ownerAuth.ok) {
+        return res.status(ownerAuth.status).json({ error: ownerAuth.error })
+      }
+    }
+
+    if (req.body.maxCoHosts !== undefined) {
+      const currentCoHostsCount = Array.isArray(room.coHosts) ? room.coHosts.length : 0
+      if (req.body.maxCoHosts < currentCoHostsCount) {
+        return res.status(400).json({ error: `maxCoHosts cannot be set below current co-hosts count (${currentCoHostsCount})` })
+      }
     }
 
     // Prevent reactivating an ended room
@@ -146,12 +195,7 @@ router.put('/:id', authenticate, authorize('teacher'), requireApprovedTeacher, a
     if (req.body.isActive === false && updatedRoom.endedAt) {
       const io = req.app.get('io')
       io.to(room.code).emit('room:ended', { roomId: room._id, endedAt: updatedRoom.endedAt })
-      // Force a final leaderboard recompute+broadcast so the settled board is complete — the live
-      // board is otherwise deferred to the quiet-debounce window and may not have fired yet.
       req.app.get('liveUpdates')?.refreshLeaderboardNow(room._id)
-      // Pre-warm the results snapshot so the ~N students about to open the results page all read a
-      // shared cache instead of each triggering full-room aggregations (the end-session stampede).
-      // Fire-and-forget + no-op when Redis is off; never blocks or fails the room-end response.
       rebuildSnapshot(room._id).catch((e) => console.error('[rooms] snapshot pre-warm failed:', e.message))
     }
     
@@ -167,8 +211,9 @@ router.delete('/:id', authenticate, authorize('teacher'), requireApprovedTeacher
   try {
     const room = await getRoomById(req.params.id)
     
-    if (room.teacher._id.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Only the room owner can delete the room' })
+    const ownerAuth = checkRoomOwnership(room, req.user._id)
+    if (!ownerAuth.ok) {
+      return res.status(ownerAuth.status).json({ error: ownerAuth.error })
     }
 
     await deleteRoom(req.params.id)
@@ -179,4 +224,4 @@ router.delete('/:id', authenticate, authorize('teacher'), requireApprovedTeacher
   }
 })
 
-export default router
+export default router
