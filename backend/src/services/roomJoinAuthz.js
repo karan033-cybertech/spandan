@@ -11,16 +11,48 @@
 // a room that does not exist or (for students) has ended.
 //
 // Returns { ok: true } or { ok: false, error: '<reason>' }.
-export function canJoinRoom({ role, userId, room }) {
+export function canJoinRoom({ role, userId, room, coHostCode, teacherApprovalStatus }) {
   if (!room) return { ok: false, error: 'Room not found' }
 
   // room.teacher may be a raw ObjectId or a populated user doc — handle both.
   const teacherId = String(room.teacher?._id ?? room.teacher)
+  const uid = String(userId)
 
   if (role === 'teacher') {
-    return teacherId === String(userId)
-      ? { ok: true }
-      : { ok: false, error: 'Not authorized for this room' }
+    // 1. Owning teacher (Host)
+    if (teacherId === uid) {
+      return { ok: true, isOwner: true }
+    }
+
+    // 2. Existing Co-Host (Reconnect case)
+    const isCoHost = Array.isArray(room.coHosts) && room.coHosts.some(ch => {
+      const chId = String(ch.userId?._id ?? ch.userId)
+      return chId === uid
+    })
+    if (isCoHost) {
+      return { ok: true, isCoHost: true }
+    }
+
+    // 3. New Co-Host joining with code
+    if (coHostCode) {
+      if (teacherApprovalStatus && teacherApprovalStatus !== 'approved') {
+        return { ok: false, error: 'Your teacher account is awaiting admin approval' }
+      }
+      if (!room.coHostCode || room.coHostCode.toUpperCase() !== String(coHostCode).trim().toUpperCase()) {
+        return { ok: false, error: 'Invalid co-host join code' }
+      }
+      if (!room.coHostCodeExpiresAt || new Date(room.coHostCodeExpiresAt).getTime() <= Date.now()) {
+        return { ok: false, error: 'Co-host join code has expired' }
+      }
+      const currentCoHostsCount = Array.isArray(room.coHosts) ? room.coHosts.length : 0
+      const maxSlots = room.maxCoHosts ?? 0
+      if (currentCoHostsCount >= maxSlots) {
+        return { ok: false, error: 'Co-host slots are full for this room' }
+      }
+      return { ok: true, canAddCoHost: true }
+    }
+
+    return { ok: false, error: 'Not authorized for this room' }
   }
 
   if (role === 'student') {
@@ -31,3 +63,4 @@ export function canJoinRoom({ role, userId, room }) {
 
   return { ok: false, error: 'Not authorized' }
 }
+
