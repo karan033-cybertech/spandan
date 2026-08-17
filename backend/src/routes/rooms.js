@@ -109,6 +109,43 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 })
 
+// Generate co-host join code (for room host)
+router.post('/:id/cohost-code', authenticate, authorize('teacher'), requireApprovedTeacher, async (req, res) => {
+  try {
+    const { durationMinutes } = req.body
+    const { generateCoHostCodeForRoom } = await import('../services/roomJoinAuthz.js')
+    const result = await generateCoHostCodeForRoom({
+      roomId: req.params.id,
+      durationMinutes,
+      userId: req.user._id
+    })
+
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error })
+    }
+
+    return res.json({
+      success: true,
+      coHostCode: result.coHostCode,
+      coHostCodeExpiresAt: result.coHostCodeExpiresAt
+    })
+  } catch (error) {
+    console.error('Error generating co-host code:', error)
+    res.status(500).json({ error: 'Failed to generate co-host code' })
+  }
+})
+
+// Get room info by code (for teachers/students looking up room details)
+router.get('/by-code/:code', authenticate, async (req, res) => {
+  try {
+    const room = await getRoomByCode(req.params.code)
+    res.json({ room })
+  } catch (error) {
+    const status = error.message === 'Room not found' ? 404 : 500
+    res.status(status).json({ error: error.message })
+  }
+})
+
 // Join room by code (for students)
 router.get('/join/:code', authenticate, authorize('student'), async (req, res) => {
   try {
@@ -131,6 +168,49 @@ router.get('/join/:code', authenticate, authorize('student'), async (req, res) =
   } catch (error) {
     const status = error.message === 'Room not found' ? 404 : 500
     res.status(status).json({ error: error.message })
+  }
+})
+
+// Join room as co-host by code (for approved teachers)
+router.post('/join-cohost/:code', authenticate, authorize('teacher'), requireApprovedTeacher, async (req, res) => {
+  try {
+    const { coHostCode } = req.body
+    if (!coHostCode) {
+      return res.status(400).json({ error: 'Co-Host Join Code is required' })
+    }
+
+    const Room = (await import('../models/Room.js')).default
+    const room = await Room.findByCode(req.params.code)
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' })
+    }
+
+    const { addCoHostAtomic } = await import('../services/roomJoinAuthz.js')
+    const result = await addCoHostAtomic({
+      Room,
+      room,
+      userId: req.user._id,
+      userName: req.user.name,
+      coHostCode,
+      teacherApprovalStatus: req.user.teacherApprovalStatus
+    })
+
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error })
+    }
+
+    const io = req.app.get('io')
+    if (io && result.room) {
+      io.to(req.params.code.toUpperCase()).emit('cohost:joined', {
+        coHost: { userId: req.user._id, name: req.user.name || 'Teacher', joinedAt: new Date() },
+        coHosts: result.room.coHosts
+      })
+    }
+
+    return res.json({ success: true, room: result.room })
+  } catch (error) {
+    console.error('Error joining as co-host:', error)
+    res.status(500).json({ error: 'Failed to join room as co-host' })
   }
 })
 
@@ -165,10 +245,15 @@ router.put('/:id', authenticate, authorize('teacher'), requireApprovedTeacher, a
     }
 
     // Owner-only operations check:
-    // - Ending room (isActive = false)
-    // - Updating maxCoHosts, coHostCode, coHostCodeExpiresAt, or coHosts
-    const isEndingRoom = req.body.isActive === false
-    const isCoHostConfigChange = req.body.maxCoHosts !== undefined || req.body.coHostCode !== undefined || req.body.coHosts !== undefined
+    // - Ending room (isActive = false or setting endedAt)
+    // - Managing co-host configuration (maxCoHosts, coHostCode, coHostCodeExpiresAt, coHosts)
+    const isEndingRoom = req.body.isActive === false || req.body.endedAt !== undefined
+    const isCoHostConfigChange = (
+      req.body.maxCoHosts !== undefined ||
+      req.body.coHostCode !== undefined ||
+      req.body.coHostCodeExpiresAt !== undefined ||
+      req.body.coHosts !== undefined
+    )
 
     if (isEndingRoom || isCoHostConfigChange) {
       const ownerAuth = checkRoomOwnership(room, req.user._id)
@@ -190,10 +275,15 @@ router.put('/:id', authenticate, authorize('teacher'), requireApprovedTeacher, a
     }
 
     const updatedRoom = await updateRoom(req.params.id, req.body)
+    const io = req.app.get('io')
+
+    // If room settings were updated, broadcast to all room participants (Host & Co-Host sync)
+    if (req.body.settings && updatedRoom.settings && io) {
+      io.to(room.code).emit('room:settings-updated', { roomId: room._id, settings: updatedRoom.settings })
+    }
     
     // If room is being ended, emit socket event to notify all participants
-    if (req.body.isActive === false && updatedRoom.endedAt) {
-      const io = req.app.get('io')
+    if (req.body.isActive === false && updatedRoom.endedAt && io) {
       io.to(room.code).emit('room:ended', { roomId: room._id, endedAt: updatedRoom.endedAt })
       req.app.get('liveUpdates')?.refreshLeaderboardNow(room._id)
       rebuildSnapshot(room._id).catch((e) => console.error('[rooms] snapshot pre-warm failed:', e.message))
