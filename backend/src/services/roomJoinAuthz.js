@@ -64,3 +64,93 @@ export function canJoinRoom({ role, userId, room, coHostCode, teacherApprovalSta
   return { ok: false, error: 'Not authorized' }
 }
 
+/**
+ * Consolidated atomic co-host join handler.
+ * Performs validation check via `canJoinRoom` and, if adding a new co-host,
+ * executes an atomic DB push with `$expr` slot limits and expiration checks to prevent race conditions.
+ * Used by both REST POST /api/rooms/join-cohost/:code and WebSocket 'room:join'.
+ */
+export async function addCoHostAtomic({ Room, room, userId, userName, coHostCode, teacherApprovalStatus }) {
+  const decision = canJoinRoom({
+    role: 'teacher',
+    userId,
+    room,
+    coHostCode,
+    teacherApprovalStatus
+  })
+
+  if (!decision.ok) {
+    return { ok: false, error: decision.error }
+  }
+
+  if (decision.isOwner || decision.isCoHost) {
+    return { ok: true, room, isOwner: decision.isOwner, isCoHost: decision.isCoHost, isNewCoHost: false }
+  }
+
+  if (decision.canAddCoHost) {
+    const updatedRoom = await Room.findOneAndUpdate(
+      {
+        _id: room._id,
+        coHostCode: room.coHostCode,
+        coHostCodeExpiresAt: { $gt: new Date() },
+        $expr: { $lt: [{ $size: { $ifNull: ['$coHosts', []] } }, '$maxCoHosts'] },
+        'coHosts.userId': { $ne: userId }
+      },
+      {
+        $push: {
+          coHosts: {
+            userId,
+            name: userName || 'Teacher',
+            joinedAt: new Date()
+          }
+        }
+      },
+      { new: true }
+    )
+
+    if (!updatedRoom) {
+      return { ok: false, error: 'Failed to join as co-host. Code may have expired or room co-host slots are full.' }
+    }
+
+    return { ok: true, room: updatedRoom, isNewCoHost: true }
+  }
+
+  return { ok: true, room, isNewCoHost: false }
+}
+
+export async function generateCoHostCodeForRoom({ roomId, durationMinutes = 15, userId }) {
+  const Room = (await import('../models/Room.js')).default
+  const { generateCoHostCode } = await import('../models/Room.js')
+  const { checkRoomOwnership } = await import('../utils/roomOwnership.js')
+
+  const room = await Room.findById(roomId)
+  if (!room) {
+    return { ok: false, status: 404, error: 'Room not found' }
+  }
+
+  const ownerAuth = checkRoomOwnership(room, userId)
+  if (!ownerAuth.ok) {
+    return { ok: false, status: ownerAuth.status, error: ownerAuth.error }
+  }
+
+  const validMinutes = Math.min(60, Math.max(1, parseInt(durationMinutes, 10) || 15))
+  const code = generateCoHostCode(8)
+  const expiresAt = new Date(Date.now() + validMinutes * 60 * 1000)
+
+  const updatedRoom = await Room.findByIdAndUpdate(
+    room._id,
+    {
+      coHostCode: code,
+      coHostCodeExpiresAt: expiresAt
+    },
+    { new: true }
+  )
+
+  return {
+    ok: true,
+    coHostCode: updatedRoom.coHostCode,
+    coHostCodeExpiresAt: updatedRoom.coHostCodeExpiresAt,
+    room: updatedRoom
+  }
+}
+
