@@ -97,6 +97,7 @@ function RoomDetailPage() {
   const [popupIndex, setPopupIndex] = useState(0)
   const [showCreateQuestion, setShowCreateQuestion] = useState(false)
   const [showTextToQuestions, setShowTextToQuestions] = useState(false)
+  const [creatorLock, setCreatorLock] = useState(null) // { userId, name, roleLabel, action: 'create' | 'paste' }
   const [pastedText, setPastedText] = useState('') // preserved so a failed generation can reopen the popup with the text intact
   const [isGeneratingFromText, setIsGeneratingFromText] = useState(false)
   const [showTextQuestionPopup, setShowTextQuestionPopup] = useState(false)
@@ -426,12 +427,26 @@ function RoomDetailPage() {
     socket.on('recording:stopped', handleRecordingStopped)
     socket.on('recording:transcript-updated', handleTranscriptUpdated)
     socket.on('recording:transcript-cleared', handleTranscriptCleared)
+    const handleCreatorLocked = (data) => {
+      console.log('[CREATOR LOCKED SOCKET EVENT]', data)
+      if (data?.creator) {
+        setCreatorLock(data.creator)
+      }
+    }
+
+    const handleCreatorUnlocked = () => {
+      console.log('[CREATOR UNLOCKED SOCKET EVENT]')
+      setCreatorLock(null)
+    }
+
     socket.on('questions:show-popup', handleShowReviewPopup)
     socket.on('questions:hide-popup', handleHideReviewPopup)
     socket.on('questions:gen-status', handleGenStatus)
     socket.on('questions:launcher-locked', handleLauncherLocked)
     socket.on('questions:launcher-unlocked', handleLauncherUnlocked)
     socket.on('questions:popup-nav', handlePopupNav)
+    socket.on('questions:creator-locked', handleCreatorLocked)
+    socket.on('questions:creator-unlocked', handleCreatorUnlocked)
 
     return () => {
       socket.off('new_question', handleQuestionLaunched)
@@ -449,6 +464,8 @@ function RoomDetailPage() {
       socket.off('questions:launcher-locked', handleLauncherLocked)
       socket.off('questions:launcher-unlocked', handleLauncherUnlocked)
       socket.off('questions:popup-nav', handlePopupNav)
+      socket.off('questions:creator-locked', handleCreatorLocked)
+      socket.off('questions:creator-unlocked', handleCreatorUnlocked)
     }
   }, [socket, room?._id, roomSettings.timeToAnswer])
 
@@ -922,7 +939,7 @@ function RoomDetailPage() {
   }, [processTranscriptionQueue])
 
   const sendForTranscription = useCallback(async (audioBlob, sequence) => {
-    if (!audioBlob || audioBlob.size < 5000) {
+    if (!audioBlob || audioBlob.size < 100) {
       console.log(`[TRANSCRIPTION] Skipping small audio: ${audioBlob?.size || 0} bytes`)
       addToTranscriptionQueue(sequence, '')
       return
@@ -1086,6 +1103,9 @@ function RoomDetailPage() {
 
   const stopRecording = async () => {
     recordingActiveRef.current = false
+    setIsRecording(false)
+    setIsTranscribing(false)
+    setModelStatus('Processing final audio...')
 
     // Emit stop immediately to notify peers without waiting for async cleanup
     const activeSocket = socket || useSocketStore.getState().socket
@@ -1119,13 +1139,15 @@ function RoomDetailPage() {
         streamRef.current.getTracks().forEach(track => track.stop())
         streamRef.current = null
       }
+      if (displayStreamRef.current) {
+        displayStreamRef.current.getTracks().forEach(track => track.stop())
+        displayStreamRef.current = null
+      }
 
     if (segmentTimerRef.current) {
       clearInterval(segmentTimerRef.current)
     }
 
-    setIsRecording(false)
-    setIsTranscribing(false)
     setModelStatus('Ready')
   }
 
@@ -1155,6 +1177,7 @@ function RoomDetailPage() {
   const videoId = isVideoMode ? extractYouTubeId(roomSettings.videoUrl) : null
   const videoIsLiveHint = /\/live\//.test(roomSettings.videoUrl || '')
   const ytPlayerRef = useRef(null)
+  const displayStreamRef = useRef(null)
   const [videoSessionActive, setVideoSessionActive] = useState(false)
   const [isLiveStream, setIsLiveStream] = useState(false)
   // Teacher-side editing of the room's YouTube link (live or normal) after creation.
@@ -1237,8 +1260,10 @@ function RoomDetailPage() {
         setModelStatus('No tab audio — re-share and tick "Share tab audio"')
         return
       }
-      display.getVideoTracks().forEach(t => t.stop()) // only the audio is needed
-      const stream = new MediaStream(audioTracks)
+      // DO NOT stop the video track! Stopping it causes the audio track to emit silence in Chrome.
+      // We just create a stream with only the audio track for the MediaRecorder.
+      const stream = new MediaStream([audioTracks[0]])
+      displayStreamRef.current = display
       // If the teacher stops sharing via the browser UI, end the capture session.
       audioTracks[0].addEventListener('ended', () => {
         setVideoSessionActive(false)
@@ -1260,6 +1285,12 @@ function RoomDetailPage() {
       setCurrentSegment(1)
       setVideoSessionActive(true)
       setModelStatus('Ready - press play to begin')
+
+      const activeSocket = socket || useSocketStore.getState().socket
+      const codeToUse = roomCodeRef.current || room?.code
+      if (activeSocket && codeToUse) {
+        activeSocket.emit('recording:start', { roomCode: codeToUse })
+      }
 
       // If the video is already playing, begin capturing immediately.
       if (ytPlayerRef.current?.getPlayerState?.() === 1) {
@@ -1489,9 +1520,55 @@ function RoomDetailPage() {
     console.log('Text question rejected:', question.question)
   }
 
+  const isOtherCreating = !!(creatorLock && String(creatorLock.userId) !== String(user?._id))
+
+  const handleOpenCreateQuestion = () => {
+    if (isOtherCreating || isEnded) return
+    const activeSocket = socket || useSocketStore.getState().socket
+    const codeToUse = roomCodeRef.current || room?.code
+    if (activeSocket && codeToUse) {
+      activeSocket.emit('questions:creator-lock', { roomCode: codeToUse, action: 'create' })
+    }
+    setShowCreateQuestion(true)
+  }
+
+  const handleCloseCreateQuestion = () => {
+    setShowCreateQuestion(false)
+    const activeSocket = socket || useSocketStore.getState().socket
+    const codeToUse = roomCodeRef.current || room?.code
+    if (activeSocket && codeToUse) {
+      activeSocket.emit('questions:creator-unlock', { roomCode: codeToUse })
+    }
+  }
+
+  const handleOpenTextToQuestions = () => {
+    if (isOtherCreating || isEnded) return
+    const activeSocket = socket || useSocketStore.getState().socket
+    const codeToUse = roomCodeRef.current || room?.code
+    if (activeSocket && codeToUse) {
+      activeSocket.emit('questions:creator-lock', { roomCode: codeToUse, action: 'paste' })
+    }
+    setPastedText('')
+    setShowTextToQuestions(true)
+  }
+
+  const handleCloseTextToQuestions = () => {
+    setShowTextToQuestions(false)
+    const activeSocket = socket || useSocketStore.getState().socket
+    const codeToUse = roomCodeRef.current || room?.code
+    if (activeSocket && codeToUse) {
+      activeSocket.emit('questions:creator-unlock', { roomCode: codeToUse })
+    }
+  }
+
   const handleTextQuestionClose = () => {
     setShowTextQuestionPopup(false)
     setPendingTextQuestions([])
+    const activeSocket = socket || useSocketStore.getState().socket
+    const codeToUse = roomCodeRef.current || room?.code
+    if (activeSocket && codeToUse) {
+      activeSocket.emit('questions:creator-unlock', { roomCode: codeToUse })
+    }
   }
 
   const handleCreateQuestion = async (questionData) => {
@@ -1761,22 +1838,47 @@ function RoomDetailPage() {
               </div>
             )}
 
+            {/* Creator Lock Banner Indicator */}
+            {isOtherCreating && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                background: 'rgba(245, 158, 11, 0.12)',
+                border: '1px solid rgba(245, 158, 11, 0.35)',
+                borderRadius: '8px',
+                fontSize: '12px',
+                color: '#d97706',
+                fontWeight: 600
+              }}>
+                <span>🔒</span>
+                <span>
+                  {creatorLock.name || creatorLock.roleLabel} is {creatorLock.action === 'paste' ? 'pasting & generating' : 'creating'} questions
+                </span>
+              </div>
+            )}
+
             {/* Paste & Generate Button */}
             {!isEnded && (
               <button
-                onClick={() => { setPastedText(''); setShowTextToQuestions(true) }}
+                onClick={handleOpenTextToQuestions}
+                disabled={isOtherCreating || isGeneratingQuestions}
+                title={isOtherCreating ? `${creatorLock?.name || creatorLock?.roleLabel || 'Another teacher'} is currently ${creatorLock?.action === 'paste' ? 'generating questions from text' : 'creating a question'}` : ''}
                 style={{
                   padding: '8px 16px',
-                  background: '#10b981',
+                  background: (isOtherCreating || isGeneratingQuestions) ? '#9ca3af' : '#10b981',
                   color: 'white',
                   border: 'none',
                   borderRadius: '8px',
                   fontSize: '14px',
                   fontWeight: '500',
-                  cursor: 'pointer',
+                  cursor: (isOtherCreating || isGeneratingQuestions) ? 'not-allowed' : 'pointer',
+                  opacity: (isOtherCreating || isGeneratingQuestions) ? 0.6 : 1,
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px'
+                  gap: '6px',
+                  transition: 'all 0.2s ease'
                 }}
               >
                 📝 Paste & Generate
@@ -1786,19 +1888,23 @@ function RoomDetailPage() {
             {/* Create Question Button */}
             {!isEnded && (
               <button
-                onClick={() => setShowCreateQuestion(true)}
+                onClick={handleOpenCreateQuestion}
+                disabled={isOtherCreating || isGeneratingQuestions}
+                title={isOtherCreating ? `${creatorLock?.name || creatorLock?.roleLabel || 'Another teacher'} is currently ${creatorLock?.action === 'paste' ? 'generating questions from text' : 'creating a question'}` : ''}
                 style={{
                   padding: '8px 16px',
-                  background: '#3b82f6',
+                  background: (isOtherCreating || isGeneratingQuestions) ? '#9ca3af' : '#3b82f6',
                   color: 'white',
                   border: 'none',
                   borderRadius: '8px',
                   fontSize: '14px',
                   fontWeight: '500',
-                  cursor: 'pointer',
+                  cursor: (isOtherCreating || isGeneratingQuestions) ? 'not-allowed' : 'pointer',
+                  opacity: (isOtherCreating || isGeneratingQuestions) ? 0.6 : 1,
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px'
+                  gap: '6px',
+                  transition: 'all 0.2s ease'
                 }}
               >
                 ✍️ Create Q
@@ -2122,21 +2228,23 @@ function RoomDetailPage() {
                   {videoId && !videoSessionActive && (
                     <button
                       onClick={beginVideoSession}
-                      disabled={isEnded}
+                      disabled={isEnded || isOtherTeacherRecording}
                       style={{
                         width: '100%',
                         marginTop: '12px',
                         padding: '11px 16px',
-                        background: isEnded ? '#9ca3af' : 'var(--accent-gradient)',
+                        background: (isEnded || isOtherTeacherRecording) ? '#9ca3af' : 'var(--accent-gradient)',
                         color: '#fff',
                         border: 'none',
                         borderRadius: 'var(--radius)',
                         fontSize: '13px',
                         fontWeight: 600,
-                        cursor: isEnded ? 'not-allowed' : 'pointer'
+                        cursor: (isEnded || isOtherTeacherRecording) ? 'not-allowed' : 'pointer'
                       }}
                     >
-                      Start Session (share this tab's audio)
+                      {isOtherTeacherRecording
+                        ? `Session started by ${remoteRecorder.teacherName || (remoteRecorder.isOwner ? 'Host' : 'Co-Host')}`
+                        : "Start Session (share this tab's audio)"}
                     </button>
                   )}
                   <p style={{ margin: '10px 0 0', fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center' }}>
@@ -2595,7 +2703,7 @@ function RoomDetailPage() {
       {showCreateQuestion && (
         <CreateQuestionOverlay
           isOpen={showCreateQuestion}
-          onClose={() => setShowCreateQuestion(false)}
+          onClose={handleCloseCreateQuestion}
           onLaunch={handleCreateQuestion}
         />
       )}
@@ -2604,7 +2712,7 @@ function RoomDetailPage() {
       {showTextToQuestions && (
         <TextToQuestionsPopup
           isOpen={showTextToQuestions}
-          onClose={() => setShowTextToQuestions(false)}
+          onClose={handleCloseTextToQuestions}
           onGenerate={handleTextToQuestionsGenerate}
           roomSettings={roomSettings}
           isGenerating={isGeneratingFromText}

@@ -463,6 +463,7 @@ async function verifyRoomEditor(socket, roomCode) {
 const videoProgress = new Map() // roomCode -> { time }
 const videoPaused = new Map() // roomCode -> true while the teacher's question popup is open (students hold their video paused)
 const activeRecordings = new Map() // roomCode -> { teacherId, teacherName, isOwner, transcript, socketId }
+const activeQuestionCreators = new Map() // roomCode -> { userId, name, roleLabel, action, socketId }
 
 // Mark which question is CURRENTLY LIVE for a room. Set on every launch and NEVER cleared: the read
 // endpoints withhold the correct answer of `currentQuestion` from students while it is live, and it
@@ -634,6 +635,19 @@ io.on('connection', (socket) => {
           socket.emit('recording:transcript-updated', { transcript: rec.transcript })
         }
       }
+
+      // Seed joining teacher with active creator lock state (if someone is creating questions)
+      const creator = activeQuestionCreators.get(roomCode)
+      if (creator && role === 'teacher') {
+        socket.emit('questions:creator-locked', {
+          creator: {
+            userId: creator.userId,
+            name: creator.name,
+            roleLabel: creator.roleLabel,
+            action: creator.action
+          }
+        })
+      }
     } catch (error) {
       console.error('Error in room:join:', error)
       socket.emit('room:error', { error: 'Failed to join room' })
@@ -648,6 +662,13 @@ io.on('connection', (socket) => {
       const Room = (await import('./models/Room.js')).default
       const room = await Room.findByCode(roomCode)
       if (!room) return
+
+      // Clean up creator lock if held by this leaving co-host
+      const creator = activeQuestionCreators.get(roomCode)
+      if (creator && String(creator.userId) === String(userId)) {
+        activeQuestionCreators.delete(roomCode)
+        io.to(roomCode).emit('questions:creator-unlocked')
+      }
 
       const isCoHost = Array.isArray(room.coHosts) && room.coHosts.some(ch => String(ch.userId?._id ?? ch.userId) === String(userId))
       if (!isCoHost) return
@@ -836,6 +857,47 @@ io.on('connection', (socket) => {
     io.to(data.roomCode).emit('questions:launcher-unlocked')
   })
 
+  // Lock manual question creation / text-to-questions generation for other teachers
+  socket.on('questions:creator-lock', async (data) => {
+    const room = await verifyRoomEditor(socket, data?.roomCode)
+    if (!room || !data?.roomCode) return
+    const uid = String(socket.data?.userId)
+    const isOwner = String(room.teacher?._id ?? room.teacher) === uid
+    const roleLabel = isOwner ? 'Host' : 'Co-Host'
+    const name = socket.data?.userName || roleLabel
+    const creatorObj = {
+      userId: socket.data?.userId,
+      name,
+      roleLabel,
+      action: data?.action || 'create', // 'create' | 'paste'
+      socketId: socket.id
+    }
+    activeQuestionCreators.set(data.roomCode, creatorObj)
+    io.to(data.roomCode).emit('questions:creator-locked', {
+      creator: {
+        userId: creatorObj.userId,
+        name: creatorObj.name,
+        roleLabel: creatorObj.roleLabel,
+        action: creatorObj.action
+      }
+    })
+  })
+
+  // Unlock question creation / text-to-questions generation
+  socket.on('questions:creator-unlock', async (data) => {
+    const room = await verifyRoomEditor(socket, data?.roomCode)
+    if (!room || !data?.roomCode) return
+    const existing = activeQuestionCreators.get(data.roomCode)
+    if (existing) {
+      const uid = String(socket.data?.userId)
+      const isOwner = String(room.teacher?._id ?? room.teacher) === uid
+      if (String(existing.userId) === uid || existing.socketId === socket.id || isOwner) {
+        activeQuestionCreators.delete(data.roomCode)
+        io.to(data.roomCode).emit('questions:creator-unlocked')
+      }
+    }
+  })
+
   // Recording & Live Transcript synchronization for Host & Co-Hosts
   socket.on('recording:start', async (data) => {
     try {
@@ -886,12 +948,15 @@ io.on('connection', (socket) => {
 
   socket.on('recording:clear-transcript', async (data) => {
     try {
-      if (!data?.roomCode) return
-      const existing = activeRecordings.get(data.roomCode)
-      if (existing) existing.transcript = ''
+      const room = await verifyRoomEditor(socket, data?.roomCode)
+      if (!room) return
+      const rec = activeRecordings.get(data.roomCode)
+      if (rec) {
+        rec.transcript = ''
+      }
       io.to(data.roomCode).emit('recording:transcript-cleared')
-    } catch (err) {
-      console.error('[recording:clear-transcript error]', err)
+    } catch (error) {
+      console.error('Error in recording:clear-transcript:', error)
     }
   })
 
@@ -931,6 +996,15 @@ io.on('connection', (socket) => {
       if (rec.socketId === socket.id) {
         activeRecordings.delete(rCode)
         io.to(rCode).emit('recording:stopped', { teacherId: rec.teacherId })
+        break
+      }
+    }
+
+    // Clean up active question creator lock if held by the disconnected socket
+    for (const [rCode, creator] of activeQuestionCreators.entries()) {
+      if (creator.socketId === socket.id) {
+        activeQuestionCreators.delete(rCode)
+        io.to(rCode).emit('questions:creator-unlocked')
         break
       }
     }
